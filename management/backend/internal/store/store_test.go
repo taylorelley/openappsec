@@ -33,9 +33,14 @@ func Fresh(t *testing.T) *Store {
 		t.Skip("MANAGER_TEST_DATABASE_URL not set; skipping database test")
 	}
 
-	admin, err := Open(ctx, dsn)
+	// Bounded, so an unreachable database fails in seconds with a clear
+	// message rather than retrying until the package hits its test timeout.
+	connectCtx, cancelConnect := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelConnect()
+
+	admin, err := Open(connectCtx, dsn)
 	if err != nil {
-		t.Fatalf("open: %v", err)
+		t.Fatalf("could not reach the test database within 30s: %v", err)
 	}
 
 	buf := make([]byte, 8)
@@ -48,7 +53,7 @@ func Fresh(t *testing.T) *Store {
 		t.Fatalf("create schema: %v", err)
 	}
 
-	s, err := OpenWithSchema(ctx, dsn, schema)
+	s, err := OpenWithSchema(connectCtx, dsn, schema)
 	if err != nil {
 		t.Fatalf("open scoped: %v", err)
 	}

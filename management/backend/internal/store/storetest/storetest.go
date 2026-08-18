@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -37,6 +38,15 @@ func DSN(t *testing.T) string {
 	return dsn
 }
 
+// connectTimeout bounds the initial connection.
+//
+// store.Open retries until its context expires, which is right for the server
+// — it should wait for its database to come up — but wrong for a test: an
+// unreachable database would otherwise hang until the whole package hits the
+// go test timeout and reports a stack trace that says nothing about the real
+// cause.
+const connectTimeout = 30 * time.Second
+
 // Fresh returns a migrated store in a schema of its own.
 //
 // Each caller gets a uniquely named schema rather than a wiped `public`.
@@ -48,10 +58,14 @@ func Fresh(t *testing.T) *store.Store {
 	ctx := context.Background()
 	dsn := DSN(t)
 
+	connectCtx, cancelConnect := context.WithTimeout(ctx, connectTimeout)
+	defer cancelConnect()
+
 	// The schema has to exist before a pool can pin its search_path to it.
-	admin, err := store.Open(ctx, dsn)
+	admin, err := store.Open(connectCtx, dsn)
 	if err != nil {
-		t.Fatalf("open database: %v", err)
+		t.Fatalf("could not reach the test database within %s: %v\n"+
+			"MANAGER_TEST_DATABASE_URL points at %s", connectTimeout, err, redactDSN(dsn))
 	}
 
 	schema := uniqueSchemaName(t)
@@ -60,7 +74,7 @@ func Fresh(t *testing.T) *store.Store {
 		t.Fatalf("create schema %s: %v", schema, err)
 	}
 
-	scoped, err := store.OpenWithSchema(ctx, dsn, schema)
+	scoped, err := store.OpenWithSchema(connectCtx, dsn, schema)
 	if err != nil {
 		admin.Close()
 		t.Fatalf("open scoped pool: %v", err)
@@ -97,4 +111,17 @@ func uniqueSchemaName(t *testing.T) string {
 		t.Fatalf("generate schema name: %v", err)
 	}
 	return fmt.Sprintf("test_%s", hex.EncodeToString(buf))
+}
+
+// redactDSN strips the password so a failure message can name the target
+// without printing a credential into CI logs.
+func redactDSN(dsn string) string {
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		return "(unparseable DSN)"
+	}
+	if parsed.User != nil {
+		parsed.User = url.User(parsed.User.Username())
+	}
+	return parsed.Redacted()
 }
