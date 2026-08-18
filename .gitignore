@@ -49,8 +49,9 @@ makeself_help
 
 # open-appsec Manager (management/)
 # The `*.mod` rule above targets Fortran module files, but it also matches
-# go.mod. Re-include the Go module files explicitly.
-!management/backend/go.mod
+# go.mod. Re-include Go module files anywhere under management/, so a new
+# module here is not silently left out of commits.
+!management/**/go.mod
 management/frontend/node_modules/
 management/frontend/dist/
 management/backend/web/dist/*

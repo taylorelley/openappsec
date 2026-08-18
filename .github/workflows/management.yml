@@ -69,6 +69,16 @@ jobs:
             exit 1
           fi
 
+      - name: Check go.mod is tidy
+        # The repository's .gitignore has a `*.mod` rule for Fortran modules,
+        # which once swallowed go.mod entirely. This step fails loudly if the
+        # module metadata is missing or stale rather than letting a later
+        # step fail with a confusing error.
+        run: |
+          cd backend
+          test -f go.mod || { echo "management/backend/go.mod is missing from the checkout"; exit 1; }
+          go mod tidy -diff
+
       - name: Vet
         run: cd backend && go vet ./...
 
