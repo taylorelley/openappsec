@@ -48,6 +48,9 @@ version_vars.h
 makeself_help
 
 # open-appsec Manager (management/)
+# The `*.mod` rule above targets Fortran module files, but it also matches
+# go.mod. Re-include the Go module files explicitly.
+!management/backend/go.mod
 management/frontend/node_modules/
 management/frontend/dist/
 management/backend/web/dist/*
