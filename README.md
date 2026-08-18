@@ -37,6 +37,20 @@ open-appsec can be managed using multiple methods:
 * [Declarative configuration files](https://docs.openappsec.io/getting-started/getting-started)
 * [Kubernetes Helm Charts and annotations](https://docs.openappsec.io/getting-started/getting-started)
 * [Using SaaS Web Management](https://docs.openappsec.io/getting-started/using-the-web-ui-saas)
+* **Self-hosted Web Management** — see [`management/`](management/README.md)
+
+## Self-hosted Web Management
+
+[`management/`](management/README.md) contains **open-appsec Manager**, a
+self-hosted management and monitoring web UI for deployments that want the
+capabilities of the SaaS portal without sending policy or telemetry off-site.
+It provides central policy management across a fleet of agents, security event
+search and dashboards, agent status and metrics, and the learning/tuning
+workflow — and requires no changes to the agent.
+
+To try it, add `manager` to `COMPOSE_PROFILES` in any of the
+`deployment/docker-compose/*` stacks. Setup instructions, configuration and
+known limitations are in [`management/README.md`](management/README.md).
 
 open-appsec Web UI:
 <img width="1854" height="775" alt="image" src="https://github.com/user-attachments/assets/4c6f7b0a-14f3-4f02-9ab0-ddadc9979b8d" />

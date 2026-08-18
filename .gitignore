@@ -46,3 +46,10 @@
 # In source specific files
 version_vars.h
 makeself_help
+
+# open-appsec Manager (management/)
+management/frontend/node_modules/
+management/frontend/dist/
+management/backend/web/dist/*
+!management/backend/web/dist/.gitkeep
+management/backend/bin/

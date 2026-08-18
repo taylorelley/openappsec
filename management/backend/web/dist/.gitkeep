@@ -1,0 +1,6 @@
+This placeholder keeps web/dist present so the //go:embed directive in web.go
+resolves when the frontend has not been built.
+
+The real contents are produced by `npm run build` in management/frontend and
+copied here by the Docker build. A binary built without them still runs and
+serves the API; it just has no web UI.

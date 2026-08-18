@@ -23,7 +23,7 @@ services:
     environment:
       - SHARED_STORAGE_HOST=appsec-shared-storage
       - LEARNING_HOST=appsec-smartsync
-      - TUNING_HOST=appsec-tuning-svc
+      - TUNING_HOST=${APPSEC_TUNING_HOST}
       - https_proxy=${APPSEC_HTTPS_PROXY}
       - user_email=${APPSEC_USER_EMAIL}
       - AGENT_TOKEN=${APPSEC_AGENT_TOKEN}
@@ -123,6 +123,39 @@ services:
     container_name: juiceshop-backend
     profiles:
       - juiceshop
+
+
+## open-appsec Manager: self-hosted management and monitoring web UI.
+## Enable by adding "manager" to COMPOSE_PROFILES. See management/README.md.
+  appsec-manager:
+    image: ghcr.io/openappsec/manager:${APPSEC_VERSION}
+    container_name: appsec-manager
+    environment:
+      - MANAGER_DB_HOST=${APPSEC_DB_HOST}
+      - MANAGER_DB_USER=${APPSEC_DB_USER}
+      - MANAGER_DB_PASSWORD=${APPSEC_DB_PASSWORD}
+      - MANAGER_DB_NAME=${APPSEC_MANAGER_DB_NAME}
+      - MANAGER_ADMIN_LISTEN=:8080
+      ## The agent plane must stay on plain HTTP port 80: the agent hardcodes
+      ## both when posting its event stream to the tuning host.
+      - MANAGER_AGENT_LISTEN=:80
+      - MANAGER_ADMIN_USER=${APPSEC_MANAGER_ADMIN_USER}
+      - MANAGER_ADMIN_PASSWORD=${APPSEC_MANAGER_ADMIN_PASSWORD}
+      - MANAGER_EVENT_RETENTION_DAYS=${APPSEC_MANAGER_EVENT_RETENTION_DAYS}
+    volumes:
+      ## Read-write: the manager renders local_policy.yaml here for the agent.
+      - ${APPSEC_LOCALCONFIG}:/ext/appsec
+      ## Read-write: tuning decisions are published into the shared-storage
+      ## volume, because the agent fetches decisions.data from
+      ## SHARED_STORAGE_HOST rather than from the tuning host.
+      - ${APPSEC_SMART_SYNC_STORAGE}:/db
+    ports:
+      - "${APPSEC_MANAGER_PORT}:8080"
+    restart: unless-stopped
+    depends_on:
+      - appsec-db
+    profiles:
+      - manager
 
 volumes:
   shm-volume:
