@@ -20,18 +20,25 @@
 -- The ingest writer already groups by (tenant, asset_id, asset_name), so the
 -- storage key is widened to match its grouping key.
 
--- Collapse any rows that the old key had already merged, keeping the newest
--- name and the summed count, so the wider unique index can be created.
-DELETE FROM assets a
-      USING assets b
-      WHERE a.tenant_id = b.tenant_id
-        AND a.asset_id = b.asset_id
-        AND a.asset_name = b.asset_name
-        AND a.ctid < b.ctid;
+-- Drop the conflated rows outright rather than trying to split them. Under
+-- the old key every id-less asset shared the single row (tenant_id, ''), whose
+-- asset_name is whichever event arrived last and whose event_count is a sum
+-- over unrelated assets; there is nothing in the row to attribute those counts
+-- back from. Ingest rediscovers each asset on its next event, so the registry
+-- refills with correct per-asset rows instead of carrying a wrong total
+-- forward.
+DELETE FROM assets WHERE asset_id = '';
 
 -- The new index is created before the old constraint is dropped, so an
 -- instance still running the previous build keeps a constraint that matches
--- its ON CONFLICT target for as long as possible during an upgrade.
+-- its ON CONFLICT target for as long as possible during an upgrade. No
+-- deduplication is needed first: the old key was unique on (tenant_id,
+-- asset_id), a prefix of the new one, so no two rows can collide on it.
+--
+-- Not CONCURRENTLY: Migrate runs each migration inside a transaction, and
+-- CREATE INDEX CONCURRENTLY cannot run in one. The table is small — one row
+-- per discovered asset — so the brief lock is not worth splitting the
+-- migration's atomicity for.
 CREATE UNIQUE INDEX IF NOT EXISTS assets_identity_key
     ON assets (tenant_id, asset_id, asset_name);
 

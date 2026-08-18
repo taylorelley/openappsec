@@ -88,9 +88,17 @@ type StatusReport struct {
 	MetricsEndpoint   string          `json:"metricsEndpoint,omitempty"`
 }
 
-type Service struct{ pool *pgxpool.Pool }
+type Service struct {
+	pool *pgxpool.Pool
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+	// Endpoints decides which metrics endpoints may be stored and scraped.
+	// Set it once at wiring time, before the service starts serving.
+	Endpoints EndpointPolicy
+}
+
+func NewService(pool *pgxpool.Pool) *Service {
+	return &Service{pool: pool, Endpoints: DefaultEndpointPolicy()}
+}
 
 const agentColumns = `id, name, COALESCE(agent_uuid, ''), tenant_id, profile_id, mode, version,
 	policy_version, applied_revision_id, health, status, labels, metrics_endpoint,
@@ -256,7 +264,7 @@ func (s *Service) RecordStatus(ctx context.Context, id uuid.UUID, report StatusR
 	// than storing a target the scraper would later refuse anyway.
 	metricsEndpoint := report.MetricsEndpoint
 	if metricsEndpoint != "" {
-		if _, err := ParseMetricsEndpoint(metricsEndpoint); err != nil {
+		if _, err := s.Endpoints.Parse(metricsEndpoint); err != nil {
 			slog.Warn("ignoring an invalid metrics endpoint reported by an agent",
 				"agent", id, "endpoint", metricsEndpoint, "error", err)
 			metricsEndpoint = ""
@@ -328,7 +336,7 @@ func (s *Service) Touch(ctx context.Context, id uuid.UUID) error {
 func (s *Service) SetMetricsEndpoint(ctx context.Context, id uuid.UUID, endpoint string) error {
 	// An empty value clears the endpoint and disables scraping for the agent.
 	if endpoint != "" {
-		if _, err := ParseMetricsEndpoint(endpoint); err != nil {
+		if _, err := s.Endpoints.Parse(endpoint); err != nil {
 			return err
 		}
 	}

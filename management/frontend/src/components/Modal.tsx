@@ -42,6 +42,17 @@ export function Modal({ label, onClose, children, width = 680 }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreTo = useRef<HTMLElement | null>(null);
 
+  // Held in a ref so the focus lifecycle below can depend on nothing.
+  // Every call site passes an inline arrow, so onClose is a new function on
+  // each parent render; an effect depending on it would tear down and set up
+  // again — restoring focus to the trigger and then pulling it back to the
+  // panel — every time the page behind the panel rerendered, stealing focus
+  // from whatever control the user was actually using.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     restoreTo.current = document.activeElement as HTMLElement | null;
     panelRef.current?.focus();
@@ -49,7 +60,7 @@ export function Modal({ label, onClose, children, width = 680 }: Props) {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== "Tab") return;
@@ -86,7 +97,9 @@ export function Modal({ label, onClose, children, width = 680 }: Props) {
       document.removeEventListener("keydown", onKeyDown, true);
       restoreTo.current?.focus?.();
     };
-  }, [onClose]);
+    // Mount and unmount only: this is the panel's focus lifecycle, not a
+    // reaction to any prop.
+  }, []);
 
   return (
     <div

@@ -151,8 +151,14 @@ type Scraper struct {
 
 func NewScraper(svc *Service) *Scraper {
 	return &Scraper{
-		svc:    svc,
-		client: &http.Client{Timeout: 10 * time.Second},
+		svc: svc,
+		// The service's own transport, not the default one: it is what
+		// enforces the endpoint policy against the address a hostname
+		// actually resolves to.
+		client: &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: svc.Endpoints.Transport(),
+		},
 	}
 }
 
@@ -186,7 +192,7 @@ func (s *Scraper) scrapeOne(ctx context.Context, agent *Agent) error {
 	// Re-validated at scrape time, not only when stored: the value can also
 	// arrive from an agent's status push, and the stored rows predate this
 	// check.
-	endpoint, err := ParseMetricsEndpoint(agent.MetricsEndpoint)
+	endpoint, err := s.svc.Endpoints.Parse(agent.MetricsEndpoint)
 	if err != nil {
 		return err
 	}

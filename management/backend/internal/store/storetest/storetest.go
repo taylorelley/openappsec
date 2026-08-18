@@ -74,7 +74,13 @@ func Fresh(t *testing.T) *store.Store {
 		t.Fatalf("create schema %s: %v", schema, err)
 	}
 
-	scoped, err := store.OpenWithSchema(connectCtx, dsn, schema)
+	// A fresh budget rather than the one Open just spent: the admin pool may
+	// have used most of connectTimeout waiting for the database to come up,
+	// which would leave the scoped open with a near-expired context.
+	scopedCtx, cancelScoped := context.WithTimeout(ctx, connectTimeout)
+	defer cancelScoped()
+
+	scoped, err := store.OpenWithSchema(scopedCtx, dsn, schema)
 	if err != nil {
 		admin.Close()
 		t.Fatalf("open scoped pool: %v", err)
@@ -115,10 +121,15 @@ func uniqueSchemaName(t *testing.T) string {
 
 // redactDSN strips the password so a failure message can name the target
 // without printing a credential into CI logs.
+//
+// Only the URL form can be redacted field by field. A libpq keyword/value DSN
+// ("host=db password=secret") parses as a URL without error — as an opaque
+// path with no scheme — and url.Redacted then returns the password verbatim,
+// so that form is withheld entirely rather than half-redacted.
 func redactDSN(dsn string) string {
 	parsed, err := url.Parse(dsn)
-	if err != nil {
-		return "(unparseable DSN)"
+	if err != nil || parsed.Scheme == "" {
+		return "(a DSN this helper cannot redact; withheld)"
 	}
 	if parsed.User != nil {
 		parsed.User = url.User(parsed.User.Username())

@@ -150,9 +150,11 @@ them still runs and serves the API.
 | `MANAGER_POLICY_OUTPUT` | `/ext/appsec/local_policy.yaml` | rendered policy for co-located agents |
 | `MANAGER_SHARED_STORAGE_PATH` | `/db` | where `decisions.data` is published |
 | `MANAGER_ADMIN_USER` / `MANAGER_ADMIN_PASSWORD` | `admin` / generated | first-run account |
-| `MANAGER_EVENT_RETENTION_DAYS` | `30` | events older than this are dropped by partition |
+| `MANAGER_DB_SSLMODE` | `prefer` | TLS to the database; use `require`/`verify-full` off-network |
+| `MANAGER_EVENT_RETENTION_DAYS` | `30` | events older than this are dropped by partition; must be positive |
 | `MANAGER_SESSION_TTL` | `12h` | browser session lifetime |
 | `MANAGER_METRICS_SCRAPE_INTERVAL` | `1m` | Prometheus scrape cadence |
+| `MANAGER_ALLOW_PRIVATE_SCRAPE_TARGETS` | `true` | let the scraper reach RFC1918 agents; set `false` to bar them |
 | `MANAGER_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 
 ## Known limitations

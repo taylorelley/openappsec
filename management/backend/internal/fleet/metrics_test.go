@@ -14,6 +14,10 @@
 package fleet
 
 import (
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -180,7 +184,7 @@ func TestParseMetricsEndpointRejectsInternalTargets(t *testing.T) {
 		"   ",
 	} {
 		t.Run(endpoint, func(t *testing.T) {
-			if got, err := ParseMetricsEndpoint(endpoint); err == nil {
+			if got, err := DefaultEndpointPolicy().Parse(endpoint); err == nil {
 				t.Fatalf("accepted %q and would scrape %q", endpoint, got)
 			}
 		})
@@ -200,12 +204,12 @@ func TestParseMetricsEndpointAcceptsAgents(t *testing.T) {
 	}
 	for in, want := range cases {
 		t.Run(in, func(t *testing.T) {
-			got, err := ParseMetricsEndpoint(in)
+			got, err := DefaultEndpointPolicy().Parse(in)
 			if err != nil {
 				t.Fatalf("rejected %q: %v", in, err)
 			}
 			if got != want {
-				t.Fatalf("ParseMetricsEndpoint(%q) = %q, want %q", in, got, want)
+				t.Fatalf("Parse(%q) = %q, want %q", in, got, want)
 			}
 		})
 	}
@@ -214,18 +218,52 @@ func TestParseMetricsEndpointAcceptsAgents(t *testing.T) {
 // Private addresses are allowed by default, because that is where agents
 // normally live, but the switch must actually work.
 func TestPrivateScrapeTargetsAreConfigurable(t *testing.T) {
-	if _, err := ParseMetricsEndpoint("10.1.2.3:7465"); err != nil {
+	if _, err := DefaultEndpointPolicy().Parse("10.1.2.3:7465"); err != nil {
 		t.Fatalf("private targets should be allowed by default: %v", err)
 	}
 
-	AllowPrivateScrapeTargets = false
-	defer func() { AllowPrivateScrapeTargets = true }()
-
-	if _, err := ParseMetricsEndpoint("10.1.2.3:7465"); err == nil {
+	strict := EndpointPolicy{AllowPrivate: false}
+	if _, err := strict.Parse("10.1.2.3:7465"); err == nil {
 		t.Fatal("private targets should be refused when the switch is off")
 	}
 	// A loopback address stays refused either way.
-	if _, err := ParseMetricsEndpoint("127.0.0.1"); err == nil {
+	if _, err := strict.Parse("127.0.0.1"); err == nil {
 		t.Fatal("loopback must always be refused")
+	}
+}
+
+// Parse lets a hostname through because it cannot know what the name resolves
+// to — and the name may resolve differently by the time the socket is opened.
+// The transport is what has to refuse the connection, so this exercises a real
+// dial to a name that resolves to loopback.
+func TestScrapeTransportRefusesAHostnameThatResolvesToLoopback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("total_requests_counter 1\n"))
+	}))
+	defer server.Close()
+
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	// "localhost" is a name, so Parse accepts it; it resolves to 127.0.0.1.
+	endpoint := fmt.Sprintf("localhost:%d", port)
+	if _, err := DefaultEndpointPolicy().Parse(endpoint); err != nil {
+		t.Fatalf("a hostname should pass the parse stage: %v", err)
+	}
+
+	client := &http.Client{Transport: DefaultEndpointPolicy().Transport()}
+	resp, err := client.Get("http://" + endpoint + "/metrics")
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("the transport connected to a name that resolves to loopback")
+	}
+	if !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("refused for the wrong reason: %v", err)
+	}
+}
+
+// A proxy in the environment would send every scrape to the proxy instead,
+// leaving the dial check inspecting only the proxy's address.
+func TestScrapeTransportIgnoresTheEnvironmentProxy(t *testing.T) {
+	if proxy := DefaultEndpointPolicy().Transport().Proxy; proxy != nil {
+		t.Fatal("the scrape transport must not consult a proxy")
 	}
 }

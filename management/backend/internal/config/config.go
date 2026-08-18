@@ -53,8 +53,15 @@ type Config struct {
 
 	SessionTTL         time.Duration
 	EventRetentionDays int
-	MetricsScrapeEvery time.Duration
-	RollupEvery        time.Duration
+
+	// AllowPrivateScrapeTargets permits the metrics scraper to connect to
+	// RFC1918 and unique-local addresses. The normal deployment is exactly
+	// that — agents on a private compose or cluster network — so it defaults
+	// to true; set it false where the manager can reach infrastructure the
+	// agents should not be able to make it call.
+	AllowPrivateScrapeTargets bool
+	MetricsScrapeEvery        time.Duration
+	RollupEvery               time.Duration
 
 	// BootstrapAdminUser/Password seed the first admin account. If the password
 	// is empty a random one is generated and written to the log once.
@@ -80,11 +87,17 @@ func Load() (Config, error) {
 		// password containing '#', '/' or '@' would otherwise be parsed as a
 		// fragment or authority delimiter and silently truncate the DSN.
 		dsn := url.URL{
-			Scheme:   "postgres",
-			User:     url.UserPassword(env("MANAGER_DB_USER", "postgres"), os.Getenv("MANAGER_DB_PASSWORD")),
-			Host:     net.JoinHostPort(env("MANAGER_DB_HOST", "appsec-db"), env("MANAGER_DB_PORT", "5432")),
-			Path:     "/" + env("MANAGER_DB_NAME", "appsec_manager"),
-			RawQuery: url.Values{"sslmode": {env("MANAGER_DB_SSLMODE", "disable")}}.Encode(),
+			Scheme: "postgres",
+			User:   url.UserPassword(env("MANAGER_DB_USER", "postgres"), os.Getenv("MANAGER_DB_PASSWORD")),
+			Host:   net.JoinHostPort(env("MANAGER_DB_HOST", "appsec-db"), env("MANAGER_DB_PORT", "5432")),
+			Path:   "/" + env("MANAGER_DB_NAME", "appsec_manager"),
+			// "prefer" rather than "disable": it uses TLS when the server
+			// offers it and falls back when it does not, so the stock compose
+			// deployment still connects while a database that does have TLS
+			// is no longer talked to in the clear by default. Set
+			// MANAGER_DB_SSLMODE=require (or verify-full, with a CA) when the
+			// database is not on the same private network.
+			RawQuery: url.Values{"sslmode": {env("MANAGER_DB_SSLMODE", "prefer")}}.Encode(),
 		}
 		c.DatabaseURL = dsn.String()
 	}
@@ -119,6 +132,16 @@ func Load() (Config, error) {
 	if c.EventRetentionDays, err = envInt("MANAGER_EVENT_RETENTION_DAYS", 30); err != nil {
 		return c, err
 	}
+	// DropExpiredEventPartitions treats a non-positive window as "nothing to
+	// do", so a typo here would not fail and not retain-and-drop either: the
+	// events table would simply grow without bound. Refuse it at startup.
+	if c.EventRetentionDays <= 0 {
+		return c, fmt.Errorf("MANAGER_EVENT_RETENTION_DAYS must be a positive number of days, got %d",
+			c.EventRetentionDays)
+	}
+	if c.AllowPrivateScrapeTargets, err = envBool("MANAGER_ALLOW_PRIVATE_SCRAPE_TARGETS", true); err != nil {
+		return c, err
+	}
 	return c, nil
 }
 
@@ -139,6 +162,18 @@ func envInt(key string, def int) (int, error) {
 		return 0, fmt.Errorf("%s: %w", key, err)
 	}
 	return n, nil
+}
+
+func envBool(key string, def bool) (bool, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", key, err)
+	}
+	return b, nil
 }
 
 func envDuration(key string, def time.Duration) (time.Duration, error) {

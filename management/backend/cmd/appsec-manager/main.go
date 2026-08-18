@@ -105,6 +105,7 @@ func run() error {
 	auditLog := audit.New(db.Pool)
 	eventsSvc := events.NewService(db.Pool)
 	fleetSvc := fleet.NewService(db.Pool)
+	fleetSvc.Endpoints = fleet.EndpointPolicy{AllowPrivate: cfg.AllowPrivateScrapeTargets}
 	policySvc := policy.NewService(db.Pool, cfg.PolicyOutputPath)
 	learnSvc := learning.NewService(db.Pool, cfg.SharedStoragePath)
 	writer := ingest.NewWriter(db.Pool)

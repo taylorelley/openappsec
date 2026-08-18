@@ -587,6 +587,18 @@ func TestSeedPolicyRoutesLoggingToTheManager(t *testing.T) {
 // The embedded copy stays byte-identical to upstream; only the seed document
 // built from it is adjusted.
 func TestRoutingDoesNotMutateTheEmbeddedFile(t *testing.T) {
+	// Build the seed document, which is what applies the routing.
+	doc, err := DefaultDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := logDestination(t, doc)
+	if dest["cloud"] != false || dest["local-tuning"] != true {
+		t.Fatalf("the seed document should be routed at the manager, got %v", dest)
+	}
+
+	// Reading it again must still yield the untouched upstream copy: the
+	// routing has to act on the parsed document, not on the embedded bytes.
 	raw, err := schemaFS.ReadFile("schema/default_policy.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -594,4 +606,31 @@ func TestRoutingDoesNotMutateTheEmbeddedFile(t *testing.T) {
 	if !strings.Contains(string(raw), "cloud: true") {
 		t.Fatal("the embedded default should remain the unmodified upstream copy")
 	}
+
+	// And a second call must produce the same routed document rather than one
+	// built on top of a mutated source.
+	again, err := DefaultDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dest2 := logDestination(t, again); dest2["cloud"] != false || dest2["local-tuning"] != true {
+		t.Fatalf("a second DefaultDocument was routed differently: %v", dest2)
+	}
+}
+
+func logDestination(t *testing.T, doc Document) map[string]any {
+	t.Helper()
+	triggers, ok := doc["logTriggers"].([]any)
+	if !ok || len(triggers) == 0 {
+		t.Fatal("the default document has no log triggers")
+	}
+	trigger, ok := triggers[0].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected log trigger shape: %T", triggers[0])
+	}
+	dest, ok := trigger["logDestination"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected logDestination shape: %T", trigger["logDestination"])
+	}
+	return dest
 }

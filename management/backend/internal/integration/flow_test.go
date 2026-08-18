@@ -776,8 +776,11 @@ func TestRollupDoesNotOverwriteAFullDayWithAPartialWindow(t *testing.T) {
 	h := newHarness(t)
 	h.login("admin", "integration-test-password")
 
-	now := time.Now().UTC()
-	// Two events several hours apart, both today.
+	// Pinned to midday rather than time.Now(): a run before 06:00 UTC would
+	// put the two events on different days, and the same-day conflict update
+	// this test exists to cover would never be exercised.
+	now := time.Now().UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
+	// Two events six hours apart, both on the same UTC day.
 	h.postBulk(bulkPayload(
 		waapLog("203.0.113.1", "Prevent", "SQL Injection", "/a", "Critical", now.Add(-6*time.Hour)),
 		waapLog("203.0.113.2", "Prevent", "SQL Injection", "/a", "Critical", now),
