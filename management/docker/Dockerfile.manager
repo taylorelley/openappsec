@@ -40,10 +40,17 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/appsec-manager ./c
 # ----------------------------------------------------------------- runtime
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates tzdata && \
+RUN apk add --no-cache ca-certificates tzdata libcap && \
     adduser -D -u 10001 appsec
 
 COPY --from=backend /out/appsec-manager /usr/local/bin/appsec-manager
+
+# The agent plane has to listen on port 80 — the agent hardcodes it — but the
+# process runs unprivileged. Docker usually permits low ports for non-root via
+# net.ipv4.ip_unprivileged_port_start=0, but that is not guaranteed under
+# Kubernetes security contexts or older runtimes, so grant the capability
+# explicitly rather than depending on the host's sysctl.
+RUN setcap 'cap_net_bind_service=+ep' /usr/local/bin/appsec-manager
 
 # The manager writes the rendered policy into the agent's config volume and
 # decisions.data into the shared-storage volume, so both must be writable by
@@ -53,7 +60,10 @@ RUN mkdir -p /ext/appsec /db && chown -R appsec:appsec /ext/appsec /db
 USER appsec
 EXPOSE 8080 80
 
+# Probes the agent plane, which is where /healthz lives and which listens on
+# port 80 by default. Override MANAGER_AGENT_LISTEN and this needs updating
+# alongside it.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD wget -qO- http://127.0.0.1:${MANAGER_HEALTH_PORT:-80}/healthz || exit 1
+    CMD wget -qO- http://127.0.0.1/healthz >/dev/null 2>&1 || exit 1
 
 ENTRYPOINT ["/usr/local/bin/appsec-manager"]
