@@ -19,6 +19,7 @@ import { api } from "../api";
 import { useAuth } from "../auth-context";
 import { ErrorBanner, Loading, PageHeader } from "../components/Layout";
 import { formatNumber, formatTime } from "../components/charts/chart-utils";
+import { Modal } from "../components/Modal";
 import type {
   AssetLearning,
   Readiness,
@@ -88,7 +89,13 @@ function AssetCard({
   asset: AssetLearning;
   onOpen: () => void;
 }) {
-  const readiness = READINESS[asset.readiness];
+  // The Readiness union is compile-time only; the payload is whatever the
+  // server sends. An unmapped value would make this read `.color` of
+  // undefined and blank the entire page.
+  const readiness = READINESS[asset.readiness] ?? {
+    label: asset.readiness || "Unknown",
+    color: "var(--text-muted)",
+  };
 
   return (
     <div className="card">
@@ -218,30 +225,12 @@ function TuningPanel({
   });
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Tuning for ${asset.assetName}`}
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.4)",
-        zIndex: 40,
-        display: "flex",
-        justifyContent: "flex-end",
-      }}
+    <Modal
+      label={`Tuning for ${asset.assetName || asset.assetId}`}
+      onClose={onClose}
+      width={760}
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(760px, 100%)",
-          background: "var(--surface-1)",
-          borderLeft: "1px solid var(--border)",
-          overflowY: "auto",
-          padding: 20,
-        }}
-      >
+      <>
         <div className="row" style={{ justifyContent: "space-between", marginBottom: 8 }}>
           <h2 style={{ margin: 0, fontSize: 17 }}>
             Tuning · {asset.assetName || asset.assetId}
@@ -385,7 +374,7 @@ function TuningPanel({
             </table>
           </div>
         )}
-      </div>
-    </div>
+      </>
+    </Modal>
   );
 }

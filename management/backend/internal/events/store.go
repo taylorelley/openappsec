@@ -196,6 +196,14 @@ func (s *Service) Timeline(ctx context.Context, p SearchParams, groupBy string, 
 		interval = time.Minute
 	}
 
+	// Numeric columns must be cast before being compared with '' — Postgres
+	// rejects `integer <> ''` with an invalid-input-syntax error, which would
+	// fail the request for a field the API advertises as groupable.
+	groupExpr := col
+	if numericColumns[col] {
+		groupExpr = col + "::text"
+	}
+
 	// The bucket width is derived from the caller's range, never from input
 	// text, so formatting it into the statement is safe.
 	sql := fmt.Sprintf(`
@@ -204,7 +212,7 @@ func (s *Service) Timeline(ctx context.Context, p SearchParams, groupBy string, 
 		       count(*)
 		  FROM events WHERE %s
 		 GROUP BY bucket, grp ORDER BY bucket`,
-		int(interval.Seconds()), int(interval.Seconds()), col, where)
+		int(interval.Seconds()), int(interval.Seconds()), groupExpr, where)
 
 	rows, err := s.pool.Query(ctx, sql, args...)
 	if err != nil {
@@ -261,10 +269,17 @@ func (s *Service) Top(ctx context.Context, p SearchParams, field string, limit i
 		return nil, err
 	}
 
+	// As above: an empty-string test is invalid on a numeric column, so those
+	// are filtered on NULL instead.
+	selectExpr, presenceExpr := col, col+" <> ''"
+	if numericColumns[col] {
+		selectExpr, presenceExpr = col+"::text", col+" IS NOT NULL"
+	}
+
 	sql := fmt.Sprintf(`
 		SELECT %s AS k, count(*) AS n FROM events
-		 WHERE %s AND %s <> ''
-		 GROUP BY k ORDER BY n DESC LIMIT %d`, col, where, col, limit)
+		 WHERE %s AND %s
+		 GROUP BY k ORDER BY n DESC LIMIT %d`, selectExpr, where, presenceExpr, limit)
 
 	rows, err := s.pool.Query(ctx, sql, args...)
 	if err != nil {
@@ -343,7 +358,10 @@ func (s *Service) Rollup(ctx context.Context, since time.Time) error {
 		       COALESCE(manager_agent_id, '00000000-0000-0000-0000-000000000000'::uuid),
 		       asset_name, security_action, waap_incident_type, event_severity, count(*)
 		  FROM events
-		 WHERE event_time >= $1
+		 -- Truncated to a day boundary: the conflict target is the whole day,
+		 -- so aggregating only part of one would replace a complete total with
+		 -- the count of the trailing window.
+		 WHERE event_time >= date_trunc('day', $1::timestamptz)
 		 GROUP BY 1, 2, 3, 4, 5, 6
 		ON CONFLICT (day, manager_agent_id, asset_name, security_action, waap_incident_type, event_severity)
 		DO UPDATE SET event_count = EXCLUDED.event_count`, since)

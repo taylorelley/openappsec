@@ -540,3 +540,58 @@ func TestValidationResultSerialisesEmptySlicesAsArrays(t *testing.T) {
 		t.Fatalf("both fields must decode as arrays: %s", encoded)
 	}
 }
+
+// The seed revision must route events to the manager. The upstream default
+// sends them to the open-appsec cloud with no local destination, which would
+// leave a fresh install with an empty dashboard and telemetry going off-site.
+func TestSeedPolicyRoutesLoggingToTheManager(t *testing.T) {
+	doc, err := DefaultDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	triggers, _ := doc["logTriggers"].([]any)
+	if len(triggers) == 0 {
+		t.Fatal("the seed policy has no log triggers")
+	}
+
+	for i, item := range triggers {
+		trigger := item.(map[string]any)
+		destination, ok := trigger["logDestination"].(map[string]any)
+		if !ok {
+			t.Fatalf("trigger %d has no logDestination", i)
+		}
+		if destination["local-tuning"] != true {
+			t.Errorf("trigger %d: local-tuning = %v, want true — without it no events reach the manager",
+				i, destination["local-tuning"])
+		}
+		if destination["cloud"] != false {
+			t.Errorf("trigger %d: cloud = %v, want false for a self-hosted deployment",
+				i, destination["cloud"])
+		}
+		if destination["logToAgent"] != true {
+			t.Errorf("trigger %d: logToAgent = %v, want true as a local fallback",
+				i, destination["logToAgent"])
+		}
+	}
+
+	result, err := Validate(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.OK() {
+		t.Fatalf("the seed revision must still validate: %s", result.Error())
+	}
+}
+
+// The embedded copy stays byte-identical to upstream; only the seed document
+// built from it is adjusted.
+func TestRoutingDoesNotMutateTheEmbeddedFile(t *testing.T) {
+	raw, err := schemaFS.ReadFile("schema/default_policy.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "cloud: true") {
+		t.Fatal("the embedded default should remain the unmodified upstream copy")
+	}
+}

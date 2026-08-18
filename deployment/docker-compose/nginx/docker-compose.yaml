@@ -113,7 +113,11 @@ services:
     restart: unless-stopped
     environment:
       - POSTGRES_PASSWORD=${APPSEC_DB_PASSWORD}
-      - POSTGRES_USER=${APPSEC_DB_USER} 
+      - POSTGRES_USER=${APPSEC_DB_USER}
+      ## Creates the manager's database on first start. Without it the volume
+      ## is initialised with only the default database and the manager cannot
+      ## connect, so it never gets as far as running its migrations.
+      - POSTGRES_DB=${APPSEC_MANAGER_DB_NAME} 
     volumes:
       - ${APPSEC_POSTGRES_STORAGE}:/var/lib/postgresql
 

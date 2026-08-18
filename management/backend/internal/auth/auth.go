@@ -245,7 +245,19 @@ func (s *Service) SetPassword(ctx context.Context, id uuid.UUID, password string
 	if err != nil {
 		return err
 	}
-	tag, err := s.pool.Exec(ctx,
+	// One transaction, because a password change that did not revoke sessions
+	// would leave the account reachable with the old credential's session.
+	// Changing a password must evict every existing session, the same way
+	// disabling an account does: resetting the password of a compromised
+	// account is precisely how an operator locks an intruder out. A caller
+	// changing its own password issues itself a fresh session afterwards.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op once committed
+
+	tag, err := tx.Exec(ctx,
 		`UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, id, hash)
 	if err != nil {
 		return err
@@ -253,17 +265,10 @@ func (s *Service) SetPassword(ctx context.Context, id uuid.UUID, password string
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-
-	// Changing a password must evict every existing session, the same way
-	// disabling an account does. Resetting the password of a compromised
-	// account is precisely how an operator locks an intruder out, and it
-	// achieves nothing if the intruder's session keeps working until the TTL
-	// expires. A caller changing its own password is expected to issue itself
-	// a fresh session afterwards.
-	if _, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, id); err != nil {
-		return fmt.Errorf("auth: password changed but sessions were not revoked: %w", err)
+	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, id); err != nil {
+		return err
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (s *Service) DeleteUser(ctx context.Context, id uuid.UUID) error {
@@ -273,6 +278,29 @@ func (s *Service) DeleteUser(ctx context.Context, id uuid.UUID) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+// VerifyPassword checks a user's password without issuing a session.
+//
+// Login is the wrong tool for a re-authentication check: it inserts a session
+// row before returning, so using it to confirm the current password would
+// leave a live session behind on every password change.
+func (s *Service) VerifyPassword(ctx context.Context, id uuid.UUID, password string) error {
+	var hash string
+	err := s.pool.QueryRow(ctx,
+		`SELECT password_hash FROM users WHERE id = $1`, id).Scan(&hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	ok, err := VerifyPassword(password, hash)
+	if err != nil || !ok {
+		return ErrInvalidCredentials
 	}
 	return nil
 }

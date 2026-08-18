@@ -183,9 +183,12 @@ func (s *Scraper) ScrapeAll(ctx context.Context) {
 }
 
 func (s *Scraper) scrapeOne(ctx context.Context, agent *Agent) error {
-	endpoint := agent.MetricsEndpoint
-	if !strings.HasPrefix(endpoint, "http://") && !strings.HasPrefix(endpoint, "https://") {
-		endpoint = fmt.Sprintf("http://%s:%d/metrics", endpoint, DefaultMetricsPort)
+	// Re-validated at scrape time, not only when stored: the value can also
+	// arrive from an agent's status push, and the stored rows predate this
+	// check.
+	endpoint, err := ParseMetricsEndpoint(agent.MetricsEndpoint)
+	if err != nil {
+		return err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)

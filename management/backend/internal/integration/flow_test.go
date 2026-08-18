@@ -700,3 +700,114 @@ func urlEncode(s string) string {
 	}
 	return sb.String()
 }
+
+// Numeric columns are advertised as queryable, but Postgres rejects
+// `integer <> ”`, so grouping or ranking by one used to fail the request.
+func TestAnalyticsWorkOnNumericFields(t *testing.T) {
+	h := newHarness(t)
+	h.login("admin", "integration-test-password")
+
+	now := time.Now().UTC()
+	h.postBulk(bulkPayload(
+		waapLog("203.0.113.9", "Prevent", "SQL Injection", "/a", "Critical", now),
+		waapLog("198.51.100.4", "Detect", "Cross Site Scripting", "/b", "High", now),
+	))
+
+	for _, field := range []string{"sourceport", "httpresponsecode", "destinationport", "waapfinalscore"} {
+		t.Run("top/"+field, func(t *testing.T) {
+			var top []events.TopEntry
+			h.decode(h.do(http.MethodGet, "/api/dashboard/top?field="+field, nil),
+				http.StatusOK, &top)
+		})
+		t.Run("timeline/"+field, func(t *testing.T) {
+			var buckets []events.TimeBucket
+			h.decode(h.do(http.MethodGet, "/api/dashboard/timeline?groupBy="+field, nil),
+				http.StatusOK, &buckets)
+		})
+	}
+
+	// The values must actually come back, not just avoid an error.
+	var top []events.TopEntry
+	h.decode(h.do(http.MethodGet, "/api/dashboard/top?field=httpresponsecode", nil),
+		http.StatusOK, &top)
+	if len(top) == 0 || top[0].Key != "403" {
+		t.Fatalf("expected the 403 response code to rank first, got %+v", top)
+	}
+}
+
+// event_severity is a text column, so max() returns the alphabetically last
+// value — "Medium" would outrank "Critical" and understate a suggestion's risk.
+func TestSuggestionSeverityIsRankedNotAlphabetical(t *testing.T) {
+	h := newHarness(t)
+	h.login("admin", "integration-test-password")
+
+	now := time.Now().UTC()
+	// Same asset and URI, mixed severities including one Critical.
+	h.postBulk(bulkPayload(
+		waapLog("203.0.113.1", "Detect", "SQL Injection", "/rest/mixed", "Medium", now),
+		waapLog("203.0.113.2", "Detect", "SQL Injection", "/rest/mixed", "Low", now),
+		waapLog("203.0.113.3", "Prevent", "SQL Injection", "/rest/mixed", "Critical", now),
+	))
+
+	var suggestions []learning.Suggestion
+	h.decode(h.do(http.MethodGet,
+		"/api/learning/suggestions?assetId=asset-int-1&tenantId=tenant-int", nil),
+		http.StatusOK, &suggestions)
+
+	var found bool
+	for _, s := range suggestions {
+		if s.EventType == "url" && s.EventTitle == "/rest/mixed" {
+			found = true
+			if s.MaxSeverity != "Critical" {
+				t.Fatalf("maxSeverity = %q, want Critical (alphabetical max would give Medium)",
+					s.MaxSeverity)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected a suggestion for /rest/mixed")
+	}
+}
+
+// Rollup's conflict target is a whole day, so aggregating only part of one
+// would replace a complete daily total with the trailing window's count.
+func TestRollupDoesNotOverwriteAFullDayWithAPartialWindow(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.login("admin", "integration-test-password")
+
+	now := time.Now().UTC()
+	// Two events several hours apart, both today.
+	h.postBulk(bulkPayload(
+		waapLog("203.0.113.1", "Prevent", "SQL Injection", "/a", "Critical", now.Add(-6*time.Hour)),
+		waapLog("203.0.113.2", "Prevent", "SQL Injection", "/a", "Critical", now),
+	))
+
+	// A full-day rollup first.
+	if err := h.events.Rollup(ctx, now.Add(-24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	full := rollupTotal(t, h)
+	if full != 2 {
+		t.Fatalf("expected the day to roll up to 2 events, got %d", full)
+	}
+
+	// Then a rollup whose window starts after the first event. It must still
+	// recompute the whole day rather than replacing it with the tail.
+	if err := h.events.Rollup(ctx, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if after := rollupTotal(t, h); after != full {
+		t.Fatalf("a partial-window rollup changed the daily total from %d to %d", full, after)
+	}
+}
+
+func rollupTotal(t *testing.T, h *harness) int64 {
+	t.Helper()
+	var total int64
+	if err := h.store.Pool.QueryRow(context.Background(),
+		`SELECT COALESCE(sum(event_count), 0) FROM event_daily_rollups`).Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	return total
+}

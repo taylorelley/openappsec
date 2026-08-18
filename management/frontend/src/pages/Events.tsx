@@ -172,6 +172,15 @@ export function Events() {
                   <tr
                     key={row.id}
                     onClick={() => setSelected(row)}
+                    tabIndex={0}
+                    // Opening an event was mouse-only; BarList already handles
+                    // Enter and Space for the same pattern.
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSelected(row);
+                      }
+                    }}
                     style={{ cursor: "pointer" }}
                   >
                     <td className="num" style={{ whiteSpace: "nowrap" }}>

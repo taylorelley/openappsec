@@ -210,7 +210,14 @@ func (s *Service) Suggestions(ctx context.Context, tenantID, assetID string, lim
 			       'url'::text AS event_type, http_uri_path AS event_title,
 			       count(*) AS events, count(DISTINCT source_ip) AS sources,
 			       mode() WITHIN GROUP (ORDER BY waap_incident_type) AS top_attack,
-			       max(event_severity) AS max_severity,
+			       -- Ranked explicitly: event_severity is text, so max() would
+			       -- return the alphabetically last value ("Medium" beats
+			       -- "Critical") and understate the risk of a suggestion.
+			       (ARRAY['', 'Info', 'Low', 'Medium', 'High', 'Critical'])[
+			           max(CASE lower(event_severity)
+			                 WHEN 'critical' THEN 6 WHEN 'high' THEN 5
+			                 WHEN 'medium' THEN 4 WHEN 'low' THEN 3
+			                 WHEN 'info' THEN 2 ELSE 1 END)] AS max_severity,
 			       min(event_time) AS first_seen, max(event_time) AS last_seen
 			  FROM events
 			 WHERE asset_id = $2 AND ($1 = '' OR tenant_id = $1)
@@ -223,7 +230,11 @@ func (s *Service) Suggestions(ctx context.Context, tenantID, assetID string, lim
 			       'parameterName', matched_parameter,
 			       count(*), count(DISTINCT source_ip),
 			       mode() WITHIN GROUP (ORDER BY waap_incident_type),
-			       max(event_severity), min(event_time), max(event_time)
+			       (ARRAY['', 'Info', 'Low', 'Medium', 'High', 'Critical'])[
+			           max(CASE lower(event_severity)
+			                 WHEN 'critical' THEN 6 WHEN 'high' THEN 5
+			                 WHEN 'medium' THEN 4 WHEN 'low' THEN 3
+			                 WHEN 'info' THEN 2 ELSE 1 END)], min(event_time), max(event_time)
 			  FROM events
 			 WHERE asset_id = $2 AND ($1 = '' OR tenant_id = $1)
 			   AND matched_parameter <> '' AND waap_incident_type <> ''
@@ -235,7 +246,11 @@ func (s *Service) Suggestions(ctx context.Context, tenantID, assetID string, lim
 			       'source', source_ip,
 			       count(*), count(DISTINCT source_ip),
 			       mode() WITHIN GROUP (ORDER BY waap_incident_type),
-			       max(event_severity), min(event_time), max(event_time)
+			       (ARRAY['', 'Info', 'Low', 'Medium', 'High', 'Critical'])[
+			           max(CASE lower(event_severity)
+			                 WHEN 'critical' THEN 6 WHEN 'high' THEN 5
+			                 WHEN 'medium' THEN 4 WHEN 'low' THEN 3
+			                 WHEN 'info' THEN 2 ELSE 1 END)], min(event_time), max(event_time)
 			  FROM events
 			 WHERE asset_id = $2 AND ($1 = '' OR tenant_id = $1)
 			   AND source_ip <> '' AND waap_incident_type <> ''

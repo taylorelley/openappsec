@@ -17,11 +17,14 @@ package store
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -64,6 +67,18 @@ func OpenWithSchema(ctx context.Context, dsn, schema string) (*Store, error) {
 			pool.Close()
 		}
 		lastErr = err
+
+		// A missing database is a configuration problem, not a service that
+		// has yet to come up, so retrying for the whole timeout would only
+		// delay a failure the operator has to fix by hand. Say what is wrong
+		// immediately.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.InvalidCatalogName {
+			return nil, fmt.Errorf(
+				"database %q does not exist on the server; create it, or set "+
+					"MANAGER_DB_NAME to an existing database: %w",
+				cfg.ConnConfig.Database, err)
+		}
 
 		delay := time.Duration(1<<min(attempt, 5)) * time.Second
 		select {

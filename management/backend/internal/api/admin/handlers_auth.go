@@ -99,9 +99,9 @@ func (s *Server) handleChangeOwnPassword(w http.ResponseWriter, r *http.Request)
 	user := auth.MustUser(r.Context())
 
 	// Re-authenticate before changing the password, so a borrowed session
-	// cannot be used to lock the real owner out.
-	if _, _, err := s.auth.Login(r.Context(), user.Username, req.CurrentPassword,
-		r.UserAgent(), r.RemoteAddr); err != nil {
+	// cannot be used to lock the real owner out. VerifyPassword rather than
+	// Login: the latter would mint a session that this path throws away.
+	if err := s.auth.VerifyPassword(r.Context(), user.ID, req.CurrentPassword); err != nil {
 		writeError(w, http.StatusForbidden, "current password is incorrect")
 		return
 	}

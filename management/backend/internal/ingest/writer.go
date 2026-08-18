@@ -181,14 +181,15 @@ func (w *Writer) updateDerived(ctx context.Context, events []*Event) error {
 	}
 
 	for k, n := range assets {
+		// Conflict target matches the grouping key above. Keying on
+		// (tenant, asset_id) alone merged every asset reported without an id
+		// into one row, mixing their counts and flipping the name.
 		batch.Queue(`
 			INSERT INTO assets (id, tenant_id, asset_id, asset_name, event_count)
 			VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (tenant_id, asset_id) DO UPDATE
+			ON CONFLICT (tenant_id, asset_id, asset_name) DO UPDATE
 			   SET last_seen_at = now(),
-			       event_count  = assets.event_count + EXCLUDED.event_count,
-			       asset_name   = CASE WHEN EXCLUDED.asset_name <> '' THEN EXCLUDED.asset_name
-			                           ELSE assets.asset_name END`,
+			       event_count  = assets.event_count + EXCLUDED.event_count`,
 			uuid.New(), k.tenant, k.id, k.name, n)
 	}
 

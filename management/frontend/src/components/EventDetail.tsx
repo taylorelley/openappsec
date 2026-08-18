@@ -19,6 +19,7 @@ import { api } from "../api";
 import { useAuth } from "../auth-context";
 import type { EventRow } from "../types";
 import { formatTime, severityColor } from "./charts/chart-utils";
+import { Modal } from "./Modal";
 
 // The exception condition keys the agent understands. Hostname, URL and
 // parameter name are pre-selected: narrow enough to be safe for the common
@@ -76,30 +77,8 @@ export function EventDetail({
   }
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Event detail"
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.4)",
-        zIndex: 40,
-        display: "flex",
-        justifyContent: "flex-end",
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(680px, 100%)",
-          background: "var(--surface-1)",
-          borderLeft: "1px solid var(--border)",
-          overflowY: "auto",
-          padding: 20,
-        }}
-      >
+    <Modal label={`Event detail: ${event.eventName}`} onClose={onClose}>
+      <>
         <div
           className="row"
           style={{ justifyContent: "space-between", marginBottom: 14 }}
@@ -219,8 +198,8 @@ export function EventDetail({
               : JSON.stringify(raw.data ?? {}, null, 2)}
           </pre>
         </Section>
-      </div>
-    </div>
+      </>
+    </Modal>
   );
 }
 

@@ -144,16 +144,26 @@ func run() error {
 	}
 
 	secureCookies := cfg.TLSCertFile != "" && cfg.TLSKeyFile != ""
+	// Full timeouts, not just on headers: without ReadTimeout, WriteTimeout
+	// and IdleTimeout a slow client can hold a connection open indefinitely.
 	adminSrv := &http.Server{
 		Addr: cfg.AdminListen,
 		Handler: admin.NewServer(authSvc, auditLog, eventsSvc, fleetSvc, policySvc,
 			learnSvc, secureCookies, ui).Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
 	agentSrv := &http.Server{
 		Addr:              cfg.AgentListen,
 		Handler:           agentapi.NewServer(db.Pool, writer, fleetSvc, policySvc, learnSvc).Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
+		// Longer than the admin plane: an event bulk can be up to 32 MiB and
+		// may arrive over a slow link from a remote agent.
+		ReadTimeout:  5 * time.Minute,
+		WriteTimeout: time.Minute,
+		IdleTimeout:  2 * time.Minute,
 	}
 
 	go runBackground(ctx, db, authSvc, eventsSvc, fleetSvc, scraper, cfg)

@@ -16,6 +16,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -74,13 +76,17 @@ func Load() (Config, error) {
 
 	c.DatabaseURL = os.Getenv("MANAGER_DATABASE_URL")
 	if c.DatabaseURL == "" {
-		host := env("MANAGER_DB_HOST", "appsec-db")
-		port := env("MANAGER_DB_PORT", "5432")
-		user := env("MANAGER_DB_USER", "postgres")
-		pass := env("MANAGER_DB_PASSWORD", "")
-		name := env("MANAGER_DB_NAME", "appsec_manager")
-		c.DatabaseURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
-			user, pass, host, port, name)
+		// Assembled through url.URL rather than by string formatting: a
+		// password containing '#', '/' or '@' would otherwise be parsed as a
+		// fragment or authority delimiter and silently truncate the DSN.
+		dsn := url.URL{
+			Scheme:   "postgres",
+			User:     url.UserPassword(env("MANAGER_DB_USER", "postgres"), os.Getenv("MANAGER_DB_PASSWORD")),
+			Host:     net.JoinHostPort(env("MANAGER_DB_HOST", "appsec-db"), env("MANAGER_DB_PORT", "5432")),
+			Path:     "/" + env("MANAGER_DB_NAME", "appsec_manager"),
+			RawQuery: url.Values{"sslmode": {env("MANAGER_DB_SSLMODE", "disable")}}.Encode(),
+		}
+		c.DatabaseURL = dsn.String()
 	}
 
 	var err error
@@ -92,6 +98,23 @@ func Load() (Config, error) {
 	}
 	if c.RollupEvery, err = envDuration("MANAGER_ROLLUP_INTERVAL", 5*time.Minute); err != nil {
 		return c, err
+	}
+
+	// The interval values drive time.NewTicker, which panics on a
+	// non-positive duration, and a non-positive session TTL would expire every
+	// session the moment it was issued. Refuse at startup rather than crash or
+	// misbehave later.
+	for _, d := range []struct {
+		key   string
+		value time.Duration
+	}{
+		{"MANAGER_SESSION_TTL", c.SessionTTL},
+		{"MANAGER_METRICS_SCRAPE_INTERVAL", c.MetricsScrapeEvery},
+		{"MANAGER_ROLLUP_INTERVAL", c.RollupEvery},
+	} {
+		if d.value <= 0 {
+			return c, fmt.Errorf("%s must be a positive duration, got %s", d.key, d.value)
+		}
 	}
 	if c.EventRetentionDays, err = envInt("MANAGER_EVENT_RETENTION_DAYS", 30); err != nil {
 		return c, err

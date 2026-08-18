@@ -160,3 +160,72 @@ func TestDeriveHealthMarksStaleAgentsUnknown(t *testing.T) {
 		t.Errorf("never-seen agent = %v, want unknown", got)
 	}
 }
+
+// The metrics endpoint decides what the manager connects to, and it can be set
+// by an enrolled agent through its status push — so it is an SSRF boundary.
+func TestParseMetricsEndpointRejectsInternalTargets(t *testing.T) {
+	for _, endpoint := range []string{
+		"127.0.0.1",
+		"127.0.0.1:9100",
+		"http://127.0.0.1:7465/metrics",
+		"localhost-is-a-name-but-this-is:0",
+		"169.254.169.254",                   // cloud metadata
+		"http://169.254.169.254/latest/api", // cloud metadata via URL
+		"[::1]:7465",
+		"0.0.0.0",
+		"224.0.0.1",
+		"file:///etc/passwd",
+		"gopher://evil/",
+		"",
+		"   ",
+	} {
+		t.Run(endpoint, func(t *testing.T) {
+			if got, err := ParseMetricsEndpoint(endpoint); err == nil {
+				t.Fatalf("accepted %q and would scrape %q", endpoint, got)
+			}
+		})
+	}
+}
+
+func TestParseMetricsEndpointAcceptsAgents(t *testing.T) {
+	cases := map[string]string{
+		// The common case: a compose service name.
+		"appsec-agent":                     "http://appsec-agent:7465/metrics",
+		"appsec-agent:9100":                "http://appsec-agent:9100/metrics",
+		"agent.internal.example.com":       "http://agent.internal.example.com:7465/metrics",
+		"http://appsec-agent:7465/metrics": "http://appsec-agent:7465/metrics",
+		// A path in the input is discarded; the manager always scrapes /metrics.
+		"https://agent.example.com/anything": "https://agent.example.com:7465/metrics",
+		"203.0.113.10":                       "http://203.0.113.10:7465/metrics",
+	}
+	for in, want := range cases {
+		t.Run(in, func(t *testing.T) {
+			got, err := ParseMetricsEndpoint(in)
+			if err != nil {
+				t.Fatalf("rejected %q: %v", in, err)
+			}
+			if got != want {
+				t.Fatalf("ParseMetricsEndpoint(%q) = %q, want %q", in, got, want)
+			}
+		})
+	}
+}
+
+// Private addresses are allowed by default, because that is where agents
+// normally live, but the switch must actually work.
+func TestPrivateScrapeTargetsAreConfigurable(t *testing.T) {
+	if _, err := ParseMetricsEndpoint("10.1.2.3:7465"); err != nil {
+		t.Fatalf("private targets should be allowed by default: %v", err)
+	}
+
+	AllowPrivateScrapeTargets = false
+	defer func() { AllowPrivateScrapeTargets = true }()
+
+	if _, err := ParseMetricsEndpoint("10.1.2.3:7465"); err == nil {
+		t.Fatal("private targets should be refused when the switch is off")
+	}
+	// A loopback address stays refused either way.
+	if _, err := ParseMetricsEndpoint("127.0.0.1"); err == nil {
+		t.Fatal("loopback must always be refused")
+	}
+}

@@ -261,18 +261,37 @@ func (s *Server) handleExceptionFromEvent(w http.ResponseWriter, r *http.Request
 		"condition": conditions,
 	}
 
-	existing, _ := candidate["exceptions"].([]any)
+	// Checked rather than asserted: a silent fallback here would replace the
+	// policy's existing exceptions with a list containing only the new one,
+	// and the operator would review a candidate that had quietly lost them.
+	existing := []any{}
+	if raw, present := candidate["exceptions"]; present && raw != nil {
+		list, ok := raw.([]any)
+		if !ok {
+			writeError(w, http.StatusConflict,
+				"the deployed policy's exceptions field is not a list; fix it in the policy editor first")
+			return
+		}
+		existing = list
+	}
 	candidate["exceptions"] = append(existing, exception)
 
-	// Attach it to the default rule, or the exception would be defined but
-	// never referenced — a common way to think a false positive is handled
-	// when it is not.
-	if policies, ok := candidate["policies"].(map[string]any); ok {
-		if def, ok := policies["default"].(map[string]any); ok {
-			refs, _ := def["exceptions"].([]any)
-			def["exceptions"] = append(refs, name)
-		}
+	// Attach it to the default rule. An exception that is defined but never
+	// referenced has no effect, which is a particularly bad failure here: the
+	// operator would believe the false positive was handled.
+	policies, ok := candidate["policies"].(map[string]any)
+	if !ok {
+		writeError(w, http.StatusConflict, "the deployed policy has no policies section")
+		return
 	}
+	def, ok := policies["default"].(map[string]any)
+	if !ok {
+		writeError(w, http.StatusConflict,
+			"the deployed policy has no default rule to attach the exception to")
+		return
+	}
+	refs, _ := def["exceptions"].([]any)
+	def["exceptions"] = append(refs, name)
 
 	result, err := policy.Validate(candidate)
 	if err != nil {

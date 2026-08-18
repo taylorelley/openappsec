@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -46,6 +47,15 @@ import (
 // 100 logs ("Sent log bulk size", core/logging/logging.cc:166) and extended
 // logging can attach request bodies, so this is generous but finite.
 const maxBodyBytes = 32 << 20 // 32 MiB
+
+// Bounds on the unauthenticated plane. These are deliberately generous: a
+// fleet flushing buffered events after an outage is normal traffic, not abuse.
+const (
+	maxConcurrentRequests  = 64
+	maxQueuedRequests      = 256
+	throttleBacklogTimeout = 10 * time.Second
+	requestTimeout         = 2 * time.Minute
+)
 
 type Server struct {
 	pool     *pgxpool.Pool
@@ -69,6 +79,11 @@ func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(requestTimeout))
+	// Ingest is unauthenticated by necessity, so it is bounded instead: a
+	// backlog throttle caps concurrent work and queues the rest briefly rather
+	// than letting one noisy agent exhaust the database pool.
+	r.Use(middleware.ThrottleBacklog(maxConcurrentRequests, maxQueuedRequests, throttleBacklogTimeout))
 
 	// Fog-shaped ingest. Unauthenticated by necessity; see the package comment.
 	r.Post("/api/v1/agents/events", s.handleEvent)

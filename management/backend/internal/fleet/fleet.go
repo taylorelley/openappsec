@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -250,6 +251,18 @@ func (s *Service) RecordStatus(ctx context.Context, id uuid.UUID, report StatusR
 		}
 	}
 
+	// The endpoint in a status push is chosen by the agent, so it decides what
+	// the manager will connect to. Drop anything that does not validate rather
+	// than storing a target the scraper would later refuse anyway.
+	metricsEndpoint := report.MetricsEndpoint
+	if metricsEndpoint != "" {
+		if _, err := ParseMetricsEndpoint(metricsEndpoint); err != nil {
+			slog.Warn("ignoring an invalid metrics endpoint reported by an agent",
+				"agent", id, "endpoint", metricsEndpoint, "error", err)
+			metricsEndpoint = ""
+		}
+	}
+
 	_, err := s.pool.Exec(ctx, `
 		UPDATE agents SET
 			status          = $2,
@@ -266,7 +279,7 @@ func (s *Service) RecordStatus(ctx context.Context, id uuid.UUID, report StatusR
 			updated_at      = now()
 		WHERE id = $1`,
 		id, raw, report.PolicyVersion, report.ProfileID, report.TenantID, report.AgentID,
-		report.AgentVersion, report.OrchestrationMode, report.MetricsEndpoint,
+		report.AgentVersion, report.OrchestrationMode, metricsEndpoint,
 		string(healthFromStatus(report)))
 	return err
 }
@@ -313,6 +326,12 @@ func (s *Service) Touch(ctx context.Context, id uuid.UUID) error {
 // SetMetricsEndpoint configures where the agent's Prometheus node is reachable.
 // A bare host is expanded to http://<host>:7465/metrics by the scraper.
 func (s *Service) SetMetricsEndpoint(ctx context.Context, id uuid.UUID, endpoint string) error {
+	// An empty value clears the endpoint and disables scraping for the agent.
+	if endpoint != "" {
+		if _, err := ParseMetricsEndpoint(endpoint); err != nil {
+			return err
+		}
+	}
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE agents SET metrics_endpoint = $2, updated_at = now() WHERE id = $1`, id, endpoint)
 	if err != nil {

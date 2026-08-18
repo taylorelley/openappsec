@@ -45,15 +45,49 @@ const APIVersion = "v1beta2"
 // renderer imposes a deterministic order on output.
 type Document map[string]any
 
-// DefaultDocument returns the shipped default policy, which is the seed
-// revision for a fresh install. It mirrors
-// config/linux/v1beta2/default/local_policy.yaml.
+// DefaultDocument returns the seed revision for a fresh install.
+//
+// It starts from the shipped default policy
+// (config/linux/v1beta2/default/local_policy.yaml, embedded verbatim so drift
+// can be detected) and then points its logging at this manager. The upstream
+// default sends events to the open-appsec cloud and enables no local
+// destination, so a manager seeded with it unmodified would sit empty while
+// the agent reported to the SaaS — the opposite of why this exists.
 func DefaultDocument() (Document, error) {
 	raw, err := schemaFS.ReadFile("schema/default_policy.yaml")
 	if err != nil {
 		return nil, err
 	}
-	return ParseYAML(raw)
+	doc, err := ParseYAML(raw)
+	if err != nil {
+		return nil, err
+	}
+	RouteLoggingToManager(doc)
+	return doc, nil
+}
+
+// RouteLoggingToManager points every log trigger's destination at the manager.
+//
+// `local-tuning` is the flag that selects the JSON_CONTAINER_SVC stream, which
+// is what posts events to $TUNING_HOST — the manager. `logToAgent` keeps the
+// agent's own log file as a fallback for diagnosis, and `cloud` is turned off
+// so a self-hosted deployment does not also ship its telemetry off-site.
+func RouteLoggingToManager(doc Document) {
+	triggers, _ := doc["logTriggers"].([]any)
+	for _, item := range triggers {
+		trigger, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		destination, ok := trigger["logDestination"].(map[string]any)
+		if !ok {
+			destination = map[string]any{}
+			trigger["logDestination"] = destination
+		}
+		destination["local-tuning"] = true
+		destination["logToAgent"] = true
+		destination["cloud"] = false
+	}
 }
 
 // ParseYAML decodes a policy document from YAML into the canonical form.

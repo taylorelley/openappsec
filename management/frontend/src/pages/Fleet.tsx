@@ -24,17 +24,30 @@ import {
   relativeTime,
 } from "../components/charts/chart-utils";
 import type { Agent } from "../types";
+import { Modal } from "../components/Modal";
 
-// The metrics worth surfacing per agent, and what to call them. Names come
-// from the agent's prometheus exporter.
-const HEADLINE_METRICS: Array<[string, string]> = [
-  ["total_requests_counter", "Requests inspected"],
-  ["requests_blocked_by_waf_counter", "Blocked by the WAF"],
-  ["unique_sources_counter", "Unique sources"],
-  ["requests_time_latency_average", "Average latency (ms)"],
-  ["cpu_usage_percentage_max", "Peak CPU (%)"],
-  ["service_physical_memory_size_kb_max", "Peak memory (KB)"],
+// The metrics worth surfacing per agent, what to call them, and how to combine
+// the samples. The aggregation is not cosmetic: a metric arrives once per
+// process and per asset, so summing a peak or an average across those samples
+// reports nonsense — two processes each at 40% CPU would read as 80% peak.
+type Aggregation = "sum" | "max" | "mean";
+
+const HEADLINE_METRICS: Array<[string, string, Aggregation]> = [
+  ["total_requests_counter", "Requests inspected", "sum"],
+  ["requests_blocked_by_waf_counter", "Blocked by the WAF", "sum"],
+  ["unique_sources_counter", "Unique sources", "max"],
+  ["requests_time_latency_average", "Average latency (ms)", "mean"],
+  ["cpu_usage_percentage_max", "Peak CPU (%)", "max"],
+  ["service_physical_memory_size_kb_max", "Peak memory (KB)", "max"],
 ];
+
+function aggregate(values: number[], kind: Aggregation): number {
+  if (values.length === 0) return 0;
+  if (kind === "max") return Math.max(...values);
+
+  const sum = values.reduce((a, b) => a + b, 0);
+  return kind === "mean" ? sum / values.length : sum;
+}
 
 export function Fleet() {
   const { canEdit, canAdmin } = useAuth();
@@ -47,6 +60,14 @@ export function Fleet() {
     queryKey: ["agents"],
     queryFn: api.agents,
     refetchInterval: 15_000,
+  });
+
+  // Writes go through useMutation so a failed request surfaces in the banner.
+  // React does not observe a rejected promise returned from an event handler,
+  // so an inline async onClick would fail silently.
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteAgent(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["agents"] }),
   });
 
   const enroll = useMutation({
@@ -73,7 +94,7 @@ export function Fleet() {
         }
       />
 
-      <ErrorBanner error={agents.error ?? enroll.error} />
+      <ErrorBanner error={agents.error ?? enroll.error ?? remove.error} />
 
       {issuedToken && (
         <div className="banner banner-ok" style={{ marginBottom: 14 }}>
@@ -160,9 +181,17 @@ export function Fleet() {
                         <button
                           className="btn btn-sm btn-danger"
                           style={{ marginLeft: 6 }}
-                          onClick={async () => {
-                            await api.deleteAgent(agent.id);
-                            await queryClient.invalidateQueries({ queryKey: ["agents"] });
+                          disabled={remove.isPending}
+                          onClick={() => {
+                            // Removing an agent drops its events and history,
+                            // so confirm rather than acting on a stray click.
+                            if (
+                              window.confirm(
+                                `Remove ${agent.name || "this agent"}? Its recorded status and metrics are deleted.`,
+                              )
+                            ) {
+                              remove.mutate(agent.id);
+                            }
                           }}
                         >
                           Remove
@@ -268,37 +297,27 @@ function AgentDetail({ agent, onClose }: { agent: Agent; onClose: () => void }) 
     refetchInterval: 30_000,
   });
 
-  const headline = HEADLINE_METRICS.map(([name, label]) => {
-    const samples = (metrics.data ?? []).filter((m) => m.name === name);
-    const total = samples.reduce((sum, s) => sum + s.value, 0);
-    return { label, total, present: samples.length > 0 };
+  // The server validates the endpoint and refuses internal targets, so the
+  // rejection has to be visible here rather than swallowed.
+  const saveEndpoint = useMutation({
+    mutationFn: (value: string) =>
+      api.updateAgent(agent.id, { metricsEndpoint: value }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["agents"] });
+      await queryClient.invalidateQueries({ queryKey: ["agent-metrics"] });
+    },
+  });
+
+  const headline = HEADLINE_METRICS.map(([name, label, kind]) => {
+    const values = (metrics.data ?? [])
+      .filter((m) => m.name === name)
+      .map((m) => m.value);
+    return { label, value: aggregate(values, kind), present: values.length > 0 };
   }).filter((m) => m.present);
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Agent ${agent.name}`}
-      onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.4)",
-        zIndex: 40,
-        display: "flex",
-        justifyContent: "flex-end",
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: "min(640px, 100%)",
-          background: "var(--surface-1)",
-          borderLeft: "1px solid var(--border)",
-          overflowY: "auto",
-          padding: 20,
-        }}
-      >
+    <Modal label={`Agent ${agent.name || "detail"}`} onClose={onClose} width={640}>
+      <>
         <div className="row" style={{ justifyContent: "space-between", marginBottom: 16 }}>
           <h2 style={{ margin: 0, fontSize: 17 }}>{agent.name || "unnamed agent"}</h2>
           <button className="btn btn-sm" onClick={onClose}>
@@ -329,6 +348,7 @@ function AgentDetail({ agent, onClose }: { agent: Agent; onClose: () => void }) 
           The agent needs <code className="mono">PROMETHEUS=true</code> for this to
           serve anything.
         </p>
+        <ErrorBanner error={saveEndpoint.error} />
         <div className="row" style={{ gap: 8, marginBottom: 18 }}>
           <input
             value={endpoint}
@@ -339,13 +359,10 @@ function AgentDetail({ agent, onClose }: { agent: Agent; onClose: () => void }) 
           />
           <button
             className="btn"
-            onClick={async () => {
-              await api.updateAgent(agent.id, { metricsEndpoint: endpoint });
-              await queryClient.invalidateQueries({ queryKey: ["agents"] });
-              await queryClient.invalidateQueries({ queryKey: ["agent-metrics"] });
-            }}
+            disabled={saveEndpoint.isPending}
+            onClick={() => saveEndpoint.mutate(endpoint)}
           >
-            Save
+            {saveEndpoint.isPending ? "Saving…" : "Save"}
           </button>
         </div>
 
@@ -367,7 +384,7 @@ function AgentDetail({ agent, onClose }: { agent: Agent; onClose: () => void }) 
                   {m.label}
                 </div>
                 <div className="num" style={{ fontSize: 19, fontWeight: 650 }}>
-                  {formatNumber(Math.round(m.total * 100) / 100)}
+                  {formatNumber(Math.round(m.value * 100) / 100)}
                 </div>
               </div>
             ))}
@@ -391,8 +408,8 @@ function AgentDetail({ agent, onClose }: { agent: Agent; onClose: () => void }) 
         >
           {JSON.stringify(agent.status ?? {}, null, 2)}
         </pre>
-      </div>
-    </div>
+      </>
+    </Modal>
   );
 }
 
