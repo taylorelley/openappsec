@@ -110,6 +110,22 @@ func (s *Server) handleChangeOwnPassword(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	// SetPassword revokes every session for the user, including this one.
+	// That is what makes an admin reset effective, but it would log a user
+	// out for changing their own password, so issue a fresh session here.
+	token, _, err := s.auth.Login(r.Context(), user.Username, req.NewPassword,
+		r.UserAgent(), r.RemoteAddr)
+	if err != nil {
+		// The password did change, so report success rather than an error the
+		// caller cannot act on; they simply need to sign in again.
+		s.audit.Record(r.Context(), r, "user.password_changed", "user", user.ID.String(), nil)
+		auth.ClearSessionCookie(w, s.secureCookies)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	s.auth.SetSessionCookie(w, token, s.secureCookies)
+
 	s.audit.Record(r.Context(), r, "user.password_changed", "user", user.ID.String(), nil)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -210,7 +226,21 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.audit.Record(r.Context(), r, "user.updated", "user", id.String(), req)
+	// Recorded field by field rather than by passing req: it carries the new
+	// password, and the audit log is readable by every admin through
+	// handleAudit. The fact of a password change is worth keeping; the
+	// password itself is not.
+	detail := map[string]any{}
+	if req.Role != nil {
+		detail["role"] = *req.Role
+	}
+	if req.Disabled != nil {
+		detail["disabled"] = *req.Disabled
+	}
+	if req.Password != nil {
+		detail["passwordChanged"] = true
+	}
+	s.audit.Record(r.Context(), r, "user.updated", "user", id.String(), detail)
 	updated, err := s.auth.GetUser(r.Context(), id)
 	if err != nil {
 		writeStoreError(w, err, "user")

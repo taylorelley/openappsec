@@ -253,6 +253,16 @@ func (s *Service) SetPassword(ctx context.Context, id uuid.UUID, password string
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+
+	// Changing a password must evict every existing session, the same way
+	// disabling an account does. Resetting the password of a compromised
+	// account is precisely how an operator locks an intruder out, and it
+	// achieves nothing if the intruder's session keeps working until the TTL
+	// expires. A caller changing its own password is expected to issue itself
+	// a fresh session afterwards.
+	if _, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, id); err != nil {
+		return fmt.Errorf("auth: password changed but sessions were not revoked: %w", err)
+	}
 	return nil
 }
 

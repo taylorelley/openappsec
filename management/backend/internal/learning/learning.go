@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -56,6 +57,26 @@ func ValidDecision(d string) bool {
 		return true
 	}
 	return false
+}
+
+// identifierPattern bounds what may become a path segment under the
+// shared-storage root. Agent tenant and asset IDs are UUIDs in practice, and
+// the deployments in this repository use names like "asset-demo-1", so this
+// charset is generous for real input while excluding every path separator.
+var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
+// ValidIdentifier reports whether a tenant or asset ID is safe to use as a
+// path segment.
+//
+// This matters because PublishDecisions builds a filesystem path from these
+// values, and filepath.Join *resolves* ".." rather than rejecting it — an
+// asset ID of "../../../etc/cron.d" would otherwise escape the root entirely
+// and have a file written at the result.
+func ValidIdentifier(s string) bool {
+	if s == "." || s == ".." {
+		return false
+	}
+	return identifierPattern.MatchString(s)
 }
 
 func ValidEventType(t string) bool {
@@ -104,6 +125,15 @@ func NewService(pool *pgxpool.Pool, sharedStoragePath string) *Service {
 // ------------------------------------------------------------- decisions
 
 func (s *Service) SetDecision(ctx context.Context, tenantID, assetID, eventType, eventTitle, decision string, by *uuid.UUID) (*Decision, error) {
+	// Validated before the insert, not just before the write: a row that
+	// cannot be published is worse than a rejected request, because it stays
+	// in the table and fails again on every republish.
+	if !ValidIdentifier(assetID) {
+		return nil, fmt.Errorf("learning: invalid asset id %q", assetID)
+	}
+	if tenantID != "" && !ValidIdentifier(tenantID) {
+		return nil, fmt.Errorf("learning: invalid tenant id %q", tenantID)
+	}
 	if !ValidEventType(eventType) {
 		return nil, fmt.Errorf("learning: invalid event type %q", eventType)
 	}
@@ -210,6 +240,12 @@ func (s *Service) PublishDecisions(ctx context.Context, tenantID, assetID string
 	if s.sharedStoragePath == "" || assetID == "" {
 		return nil
 	}
+	if !ValidIdentifier(assetID) {
+		return fmt.Errorf("learning: refusing to publish for invalid asset id %q", assetID)
+	}
+	if tenantID != "" && !ValidIdentifier(tenantID) {
+		return fmt.Errorf("learning: refusing to publish for invalid tenant id %q", tenantID)
+	}
 
 	doc, err := s.DecisionsDocumentFor(ctx, tenantID, assetID)
 	if err != nil {
@@ -228,6 +264,13 @@ func (s *Service) PublishDecisions(ctx context.Context, tenantID, assetID string
 	}
 	parts = append(parts, assetID, "tuning")
 	dir := filepath.Join(parts...)
+
+	// Belt and braces: the identifiers are already validated, but confirm the
+	// joined path really is inside the root before creating anything. This
+	// keeps the guarantee if a future caller reaches here by another route.
+	if err := ensureWithin(s.sharedStoragePath, dir); err != nil {
+		return err
+	}
 
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -306,3 +349,24 @@ func TitleForEventType(eventType, uri, paramName, paramValue, source string) str
 // NormalizeTenant maps an empty tenant to the agent's own convention so that
 // lookups from the UI and from the agent agree.
 func NormalizeTenant(tenantID string) string { return strings.TrimSpace(tenantID) }
+
+// ensureWithin reports an error unless path is the root or sits beneath it.
+func ensureWithin(root, path string) error {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil {
+		return fmt.Errorf("learning: %q is not under %q", path, root)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("learning: refusing to write outside %q", root)
+	}
+	return nil
+}

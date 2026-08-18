@@ -152,6 +152,15 @@ func (h *harness) do(method, path string, body any) *http.Response {
 	if err != nil {
 		h.t.Fatalf("%s %s: %v", method, path, err)
 	}
+
+	// Follow a re-issued session cookie, as a browser would. Changing your own
+	// password rotates the session, so a test that keeps using the old cookie
+	// would see a spurious 401.
+	for _, c := range resp.Cookies() {
+		if c.Name == auth.SessionCookieName && c.Value != "" {
+			h.sessionCookie = c
+		}
+	}
 	return resp
 }
 
