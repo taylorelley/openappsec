@@ -1,0 +1,31 @@
+{
+  "log": {
+    "eventTime": "2026-08-18T11:00:00.000",
+    "eventName": "Sync learning",
+    "eventSeverity": "Info",
+    "eventPriority": "Low",
+    "eventType": "Periodic",
+    "eventLevel": "Log",
+    "eventAudience": "Internal",
+    "eventAudienceTeam": "WAAP",
+    "eventTags": ["Threat Prevention"],
+    "eventSource": {
+      "agentId": "5f9c2b1e-0000-4a1b-9d3e-77aa11bb22cc",
+      "eventTenantId": "tenant-001",
+      "notificationId": "b9b9ab04-2e2a-4cd1-b7e5-2c956861fb69"
+    },
+    "eventData": {
+      "agentId": "5f9c2b1e-0000-4a1b-9d3e-77aa11bb22cc",
+      "tenantId": "tenant-001",
+      "notificationId": "b9b9ab04-2e2a-4cd1-b7e5-2c956861fb69",
+      "assetId": "aaaa1111-2222-3333-4444-555566667777",
+      "notificationConsumerData": {
+        "syncLearnNotificationConsumers": {
+          "assetId": "aaaa1111-2222-3333-4444-555566667777",
+          "type": "Indicators",
+          "windowId": "17"
+        }
+      }
+    }
+  }
+}

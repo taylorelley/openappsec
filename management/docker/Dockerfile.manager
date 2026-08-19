@@ -1,0 +1,69 @@
+# Copyright (C) 2026 Check Point Software Technologies Ltd. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Build context is the management/ directory.
+
+# ---------------------------------------------------------------- frontend
+FROM node:22-alpine AS frontend
+
+WORKDIR /build
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+# ----------------------------------------------------------------- backend
+FROM golang:1.25-alpine AS backend
+
+WORKDIR /src
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+
+COPY backend/ ./
+# The built UI is embedded into the binary, so the runtime image serves the
+# whole application from a single file.
+COPY --from=frontend /build/dist ./web/dist
+
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/appsec-manager ./cmd/appsec-manager
+
+# ----------------------------------------------------------------- runtime
+FROM alpine:3.21
+
+RUN apk add --no-cache ca-certificates tzdata libcap && \
+    adduser -D -u 10001 appsec
+
+COPY --from=backend /out/appsec-manager /usr/local/bin/appsec-manager
+
+# The agent plane has to listen on port 80 — the agent hardcodes it — but the
+# process runs unprivileged. Docker usually permits low ports for non-root via
+# net.ipv4.ip_unprivileged_port_start=0, but that is not guaranteed under
+# Kubernetes security contexts or older runtimes, so grant the capability
+# explicitly rather than depending on the host's sysctl.
+RUN setcap 'cap_net_bind_service=+ep' /usr/local/bin/appsec-manager
+
+# The manager writes the rendered policy into the agent's config volume and
+# decisions.data into the shared-storage volume, so both must be writable by
+# the unprivileged user the container runs as.
+RUN mkdir -p /ext/appsec /db && chown -R appsec:appsec /ext/appsec /db
+
+USER appsec
+EXPOSE 8080 80
+
+# Probes the agent plane, which is where /healthz lives and which listens on
+# port 80 by default. Override MANAGER_AGENT_LISTEN and this needs updating
+# alongside it.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD wget -qO- http://127.0.0.1/healthz >/dev/null 2>&1 || exit 1
+
+ENTRYPOINT ["/usr/local/bin/appsec-manager"]

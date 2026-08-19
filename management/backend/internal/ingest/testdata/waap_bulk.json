@@ -1,0 +1,97 @@
+{
+  "logs": [
+    {
+      "id": 1,
+      "log": {
+        "eventTime": "2026-08-18T10:15:30.123",
+        "eventName": "Web Request",
+        "eventSeverity": "Critical",
+        "eventPriority": "High",
+        "eventType": "Event Driven",
+        "eventLevel": "Incident",
+        "eventLogLevel": "info",
+        "eventAudience": "Security",
+        "eventAudienceTeam": "WAAP",
+        "eventFrequency": 0,
+        "eventTags": ["Web Application & API Protection", "Threat Prevention"],
+        "eventSource": {
+          "agentId": "5f9c2b1e-0000-4a1b-9d3e-77aa11bb22cc",
+          "eventTraceId": "trace-abc",
+          "eventSpanId": "span-def",
+          "eventTenantId": "tenant-001",
+          "issuingEngineVersion": "1.1.25",
+          "serviceName": "http-transaction-handler",
+          "exceptionIdList": []
+        },
+        "eventData": {
+          "logIndex": 42,
+          "agentId": "5f9c2b1e-0000-4a1b-9d3e-77aa11bb22cc",
+          "tenantId": "tenant-001",
+          "sourceIP": "203.0.113.9",
+          "sourcePort": 51514,
+          "httpSourceId": "203.0.113.9",
+          "proxyIP": "10.1.0.4",
+          "httpHostName": "juice.example.com",
+          "httpMethod": "GET",
+          "httpUriPath": "/rest/products/search",
+          "httpUriQuery": "q=%27%20OR%201%3D1--",
+          "httpResponseCode": 403,
+          "assetId": "aaaa1111-2222-3333-4444-555566667777",
+          "assetName": "juice-shop",
+          "practiceId": "pppp1111-2222-3333-4444-555566667777",
+          "practiceName": "default-threat-prevention-practice",
+          "practiceType": "Threat Prevention",
+          "practiceSubType": "Web Application",
+          "ruleId": "rrrr1111-2222-3333-4444-555566667777",
+          "ruleName": "Default Rule",
+          "securityAction": "Prevent",
+          "waapIncidentType": "SQL Injection",
+          "waapUserReputation": "Bad",
+          "waapUserReputationScore": 12,
+          "waapFinalScore": 9.5,
+          "waapCalculatedThreatLevel": "High",
+          "eventConfidence": "Very High",
+          "matchedLocation": "url parameter",
+          "matchedParameter": "q",
+          "matchedSample": "' OR 1=1--",
+          "waapFoundIndicators": "sqli_or_1eq1",
+          "matchedIndicators": "sqli_or_1eq1",
+          "learnedIndicators": ""
+        }
+      }
+    },
+    {
+      "id": 2,
+      "log": {
+        "eventTime": "2026-08-18T10:15:31.900",
+        "eventName": "Web Request",
+        "eventSeverity": "Info",
+        "eventPriority": "Low",
+        "eventType": "Event Driven",
+        "eventLevel": "Log",
+        "eventAudience": "Security",
+        "eventAudienceTeam": "WAAP",
+        "eventTags": ["Web Application & API Protection"],
+        "eventSource": {
+          "agentId": "5f9c2b1e-0000-4a1b-9d3e-77aa11bb22cc",
+          "eventTenantId": "tenant-001",
+          "serviceName": "http-transaction-handler"
+        },
+        "eventData": {
+          "agentId": "5f9c2b1e-0000-4a1b-9d3e-77aa11bb22cc",
+          "tenantId": "tenant-001",
+          "sourceIP": "198.51.100.22",
+          "sourcePort": 40122,
+          "httpHostName": "juice.example.com",
+          "httpMethod": "POST",
+          "httpUriPath": "/rest/user/login",
+          "httpResponseCode": 200,
+          "assetId": "aaaa1111-2222-3333-4444-555566667777",
+          "assetName": "juice-shop",
+          "practiceType": "Threat Prevention",
+          "securityAction": "Detect"
+        }
+      }
+    }
+  ]
+}
