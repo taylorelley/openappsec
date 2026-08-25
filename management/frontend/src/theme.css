@@ -129,6 +129,81 @@
   box-sizing: border-box;
 }
 
+/* --------------------------------------------------------------- app shell */
+
+.app-header-inner {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-height: 52px;
+  flex-wrap: wrap;
+}
+
+.app-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.app-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  flex-wrap: wrap;
+}
+
+.app-main {
+  flex: 1;
+  max-width: 1440px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* Below this width the nav no longer fits beside the brand and controls on
+   one line, so it drops to its own full-width, horizontally scrollable
+   strip rather than wrapping into a ragged multi-row menu. */
+@media (max-width: 720px) {
+  .app-header-inner {
+    padding: 10px 14px;
+    gap: 8px 10px;
+  }
+
+  .app-nav {
+    order: 3;
+    flex: 0 0 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .app-nav a {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  .app-header-controls {
+    margin-left: auto;
+  }
+
+  .app-main {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-user {
+    display: none;
+  }
+}
+
 html,
 body,
 #root {
@@ -300,6 +375,19 @@ tbody tr:hover {
 .grid {
   display: grid;
   gap: 16px;
+}
+
+.policy-grid {
+  grid-template-columns: var(--policy-grid-cols, 1fr);
+}
+
+/* The editor/diff split only has room to sit side by side above this width;
+   below it, the fixed 1.15fr/1fr split from --policy-grid-cols would squeeze
+   both panes unreadably narrow, so it always stacks instead. */
+@media (max-width: 860px) {
+  .policy-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ------------------------------------------------------------------ chips */
