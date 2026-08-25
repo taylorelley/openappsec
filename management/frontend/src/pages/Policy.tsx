@@ -239,8 +239,12 @@ export function Policy() {
       {validation && <ValidationPanel result={validation} />}
 
       <div
-        className="grid"
-        style={{ gridTemplateColumns: tab === "revisions" ? "1fr" : "1.15fr 1fr" }}
+        className="grid policy-grid"
+        style={
+          {
+            "--policy-grid-cols": tab === "revisions" ? "1fr" : "1.15fr 1fr",
+          } as React.CSSProperties
+        }
       >
         {tab === "form" && draft && (
           <div className="card">

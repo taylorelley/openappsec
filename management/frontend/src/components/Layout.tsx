@@ -40,17 +40,7 @@ export function Layout({ children }: { children: ReactNode }) {
           zIndex: 20,
         }}
       >
-        <div
-          style={{
-            maxWidth: 1440,
-            margin: "0 auto",
-            padding: "0 20px",
-            display: "flex",
-            alignItems: "center",
-            gap: 24,
-            height: 52,
-          }}
-        >
+        <div className="app-header-inner">
           <span style={{ fontWeight: 650, whiteSpace: "nowrap" }}>
             open-appsec
             <span className="muted" style={{ fontWeight: 400 }}>
@@ -59,7 +49,7 @@ export function Layout({ children }: { children: ReactNode }) {
             </span>
           </span>
 
-          <nav className="row" style={{ gap: 2, flex: 1 }}>
+          <nav className="app-nav">
             {NAV.map((item) => (
               <NavLink
                 key={item.to}
@@ -80,7 +70,7 @@ export function Layout({ children }: { children: ReactNode }) {
             ))}
           </nav>
 
-          <div className="row" style={{ gap: 10 }}>
+          <div className="app-header-controls">
             <button
               className="btn btn-sm"
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -89,7 +79,7 @@ export function Layout({ children }: { children: ReactNode }) {
             >
               {theme === "dark" ? "Light" : "Dark"}
             </button>
-            <span className="muted" style={{ fontSize: 12.5 }}>
+            <span className="muted app-user" style={{ fontSize: 12.5 }}>
               {user?.username} · {user?.role}
             </span>
             <button className="btn btn-sm" onClick={() => void logout()}>
@@ -99,17 +89,7 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      <main
-        style={{
-          flex: 1,
-          maxWidth: 1440,
-          width: "100%",
-          margin: "0 auto",
-          padding: "20px",
-        }}
-      >
-        {children}
-      </main>
+      <main className="app-main">{children}</main>
     </div>
   );
 }
