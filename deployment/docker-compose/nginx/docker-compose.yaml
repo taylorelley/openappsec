@@ -133,6 +133,14 @@ services:
 ## Enable by adding "manager" to COMPOSE_PROFILES. See management/README.md.
   appsec-manager:
     image: ghcr.io/openappsec/manager:${APPSEC_VERSION}
+    ## No registry publishes the manager image yet, so build it from this
+    ## repository. Drop this stanza once the image above exists.
+    build:
+      context: ../../../management
+      dockerfile: docker/Dockerfile.manager
+    ## Build rather than reuse a cached image, so a change under management/
+    ## is picked up. Drop this together with the stanza above.
+    pull_policy: build
     container_name: appsec-manager
     environment:
       - MANAGER_DB_HOST=${APPSEC_DB_HOST}

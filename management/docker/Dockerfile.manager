@@ -40,24 +40,40 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/appsec-manager ./c
 # ----------------------------------------------------------------- runtime
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates tzdata libcap && \
+RUN apk add --no-cache ca-certificates tzdata libcap su-exec && \
     adduser -D -u 10001 appsec
 
 COPY --from=backend /out/appsec-manager /usr/local/bin/appsec-manager
+COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
 
 # The agent plane has to listen on port 80 — the agent hardcodes it — but the
 # process runs unprivileged. Docker usually permits low ports for non-root via
 # net.ipv4.ip_unprivileged_port_start=0, but that is not guaranteed under
 # Kubernetes security contexts or older runtimes, so grant the capability
 # explicitly rather than depending on the host's sysctl.
+#
+# A file capability is ignored once no_new_privs is set, so a deployment that
+# adds `no-new-privileges:true` to this container must either keep it as root
+# or move the agent plane off a privileged port — which the agent does not
+# allow. Leave that option off for the manager.
 RUN setcap 'cap_net_bind_service=+ep' /usr/local/bin/appsec-manager
 
 # The manager writes the rendered policy into the agent's config volume and
 # decisions.data into the shared-storage volume, so both must be writable by
-# the unprivileged user the container runs as.
+# the unprivileged user the server runs as.
 RUN mkdir -p /ext/appsec /db && chown -R appsec:appsec /ext/appsec /db
 
-USER appsec
+# No USER here on purpose. Those two directories are normally bind mounts
+# shared with containers that run as root, and Docker creates a bind-mount
+# target owned by root regardless of what this image did to the underlying
+# path, so an image that is unprivileged from PID 1 cannot write to either.
+# The entrypoint takes ownership of them and then drops to PUID:PGID (10001 by
+# default, the appsec user above) before exec'ing the server, so the server
+# itself never runs as root. Deployments that manage volume ownership
+# themselves can still pin the container to a non-root user with compose's
+# `user:` or a Kubernetes runAsUser: the entrypoint detects that and execs
+# straight through.
 EXPOSE 8080 80
 
 # Probes the agent plane, which is where /healthz lives and which listens on
@@ -66,4 +82,5 @@ EXPOSE 8080 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD wget -qO- http://127.0.0.1/healthz >/dev/null 2>&1 || exit 1
 
-ENTRYPOINT ["/usr/local/bin/appsec-manager"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["/usr/local/bin/appsec-manager"]

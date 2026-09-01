@@ -71,6 +71,11 @@ From `deployment/docker-compose/nginx/`:
 Events start arriving within a couple of seconds — the agent flushes log
 bulks every 2s by default.
 
+For a complete stack with a reverse proxy in front, see
+[`deployment/docker-compose/npmplus/`](../deployment/docker-compose/npmplus/README.md):
+NPMplus plus the agent, the learning services and this manager, with nothing to
+enable by hand.
+
 To collect agent metrics, set `PROMETHEUS=true` on the agent container and
 enter the agent's hostname under **Fleet → Details → Metrics endpoint**.
 
@@ -156,6 +161,41 @@ them still runs and serves the API.
 | `MANAGER_METRICS_SCRAPE_INTERVAL` | `1m` | Prometheus scrape cadence |
 | `MANAGER_ALLOW_PRIVATE_SCRAPE_TARGETS` | `true` | let the scraper reach RFC1918 agents; set `false` to bar them |
 | `MANAGER_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `PUID` / `PGID` | `10001` / `10001` | user the container drops to; read by the entrypoint, not the server |
+| `MANAGER_FIX_VOLUME_OWNERSHIP` | `true` | set `false` to leave volume ownership alone |
+
+### Container user
+
+The image starts as root, takes ownership of the policy and shared-storage
+directories, and then execs the server as `PUID:PGID` — 10001 by default, the
+unprivileged `appsec` user the image creates. Without that step the manager
+cannot write to either volume: both are normally bind mounts shared with
+containers that run as root, and Docker creates a bind-mount target root-owned
+whatever the image did to the path underneath. Both write failures are only
+logged as warnings, so the result is a stack that looks healthy while policy
+never reaches the agent.
+
+If you manage volume ownership yourself, pin the container to a non-root user
+(compose `user:`, Kubernetes `runAsUser`) and the entrypoint execs straight
+through without touching anything; `MANAGER_FIX_VOLUME_OWNERSHIP=false` has the
+same effect while still running as root.
+
+The ownership fix is recursive and runs on every start, not just the first: a
+sibling container running as root can create `<tenant>/` and
+`<tenant>/<asset>/` directories under the shared storage at any point, and the
+manager has to be able to create files inside them. Checking only the root
+directory's owner would skip exactly the case that breaks the next write, since
+by then the root is already correct. The cost is a directory walk of those two
+volumes at startup.
+
+Only absolute paths below the filesystem root are touched. A relative
+`MANAGER_POLICY_OUTPUT`, or either path set to `/`, is refused with a message
+and skipped rather than recursively chowned.
+
+One constraint comes with this: the manager binds the agent plane on port 80
+as an unprivileged user through a file capability on the binary, and
+`no_new_privs` disables file capabilities. Do not set
+`no-new-privileges:true` on this container.
 
 ## Known limitations
 
