@@ -45,15 +45,21 @@ same manager profile against upstream nginx-proxy-manager.
 
 ## Deploy
 
+Two values in `.env` have to be set first: `TZ`, without which NPMplus refuses
+to start, and `APPSEC_DB_PASSWORD`, which ships empty on purpose.
+
 ```bash
 cd deployment/docker-compose/npmplus
-# Set TZ in .env — NPMplus will not start without it.
-docker compose up -d          # builds the manager image on first run
+sed -i "s/^APPSEC_DB_PASSWORD=$/APPSEC_DB_PASSWORD=$(openssl rand -hex 24)/" .env
+# Set TZ in .env too.
+docker compose up -d          # builds the manager image
 ```
 
 The manager image is built from `management/` in this repository, because no
-registry publishes it yet. Set `APPSEC_MANAGER_IMAGE` in `.env` to a registry
-tag once one exists.
+registry publishes it yet, and `APPSEC_MANAGER_PULL_POLICY=build` means a
+change under `management/` is always picked up. Once a registry image exists,
+point `APPSEC_MANAGER_IMAGE` at it and set `APPSEC_MANAGER_PULL_POLICY=missing`
+to pull rather than build.
 
 Then:
 
@@ -122,6 +128,10 @@ curl "http://<your-proxy-host>/rest/products/search?q=%27%20OR%201=1--"
   forwarding to `127.0.0.1:8080`, rather than changing `APPSEC_MANAGER_BIND`.
 - **Do not set an `AGENT_TOKEN`.** A profile token puts the agent under central
   SaaS management, which is mutually exclusive with the manager here.
+- **The juiceshop profile is on its own network.** It is a deliberately
+  vulnerable application, so it gets no route to the database or the manager —
+  NPMplus reaches it through the published loopback port instead. Keep it that
+  way if you add other test backends.
 - **Do not add `no-new-privileges:true` to `openappsec-manager`.** It binds
   port 80 unprivileged through a file capability, which `no_new_privs`
   disables.

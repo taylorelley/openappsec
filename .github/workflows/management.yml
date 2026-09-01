@@ -205,6 +205,11 @@ jobs:
       # Catches variables that were renamed in one file but not the other, and
       # build contexts that no longer resolve.
       - name: Validate the compose stacks that reference the manager
+        # The npmplus stack requires a database password rather than shipping
+        # one, so interpolation needs a value here. Any value will do: nothing
+        # is started.
+        env:
+          APPSEC_DB_PASSWORD: ci
         run: |
           for stack in npmplus nginx nginx-unified; do
             echo "::group::$stack"

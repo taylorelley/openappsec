@@ -101,13 +101,19 @@ services:
     build:
       context: ../../../management
       dockerfile: docker/Dockerfile.manager
+    ## Without a policy, Compose reuses whatever is in the local image cache
+    ## and never notices that management/ changed. "build" rebuilds on every
+    ## up, which Docker's layer cache makes cheap when nothing changed. Set
+    ## APPSEC_MANAGER_PULL_POLICY=missing once you point APPSEC_MANAGER_IMAGE
+    ## at a published image you want pulled rather than built.
+    pull_policy: ${APPSEC_MANAGER_PULL_POLICY}
     container_name: openappsec-manager
     restart: unless-stopped
     environment:
       - TZ=${TZ}
       - MANAGER_DB_HOST=openappsec-db
       - MANAGER_DB_USER=${APPSEC_DB_USER}
-      - MANAGER_DB_PASSWORD=${APPSEC_DB_PASSWORD}
+      - MANAGER_DB_PASSWORD=${APPSEC_DB_PASSWORD:?set APPSEC_DB_PASSWORD in .env}
       - MANAGER_DB_NAME=${APPSEC_MANAGER_DB_NAME}
       - MANAGER_ADMIN_LISTEN=:8080
       ## The agent plane must stay on plain HTTP port 80: the agent hardcodes
@@ -173,7 +179,7 @@ services:
     environment:
       - TZ=${TZ}
       - POSTGRES_USER=${APPSEC_DB_USER}
-      - POSTGRES_PASSWORD=${APPSEC_DB_PASSWORD}
+      - POSTGRES_PASSWORD=${APPSEC_DB_PASSWORD:?set APPSEC_DB_PASSWORD in .env}
       ## The manager refuses to start if this database does not exist.
       - POSTGRES_DB=${APPSEC_MANAGER_DB_NAME}
     volumes:
@@ -189,8 +195,16 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:3000:3000"
+    ## On its own network, not the default one. This container exists to be
+    ## exploited, and it only ever needs to be reachable from NPMplus through
+    ## the published port above — never from the database or the manager.
+    networks:
+      - juiceshop
     profiles:
       - juiceshop
+
+networks:
+  juiceshop:
 
 volumes:
   ## The channel the attachment module and the agent use to talk to each
