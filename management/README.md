@@ -180,10 +180,17 @@ If you manage volume ownership yourself, pin the container to a non-root user
 through without touching anything; `MANAGER_FIX_VOLUME_OWNERSHIP=false` has the
 same effect while still running as root.
 
-The ownership fix on the shared-storage path is recursive, because a sibling
-container running as root may already own `<tenant>/` directories underneath.
-It is skipped once the root of that path is already owned by `PUID`, so it
-costs a directory walk on first start only.
+The ownership fix is recursive and runs on every start, not just the first: a
+sibling container running as root can create `<tenant>/` and
+`<tenant>/<asset>/` directories under the shared storage at any point, and the
+manager has to be able to create files inside them. Checking only the root
+directory's owner would skip exactly the case that breaks the next write, since
+by then the root is already correct. The cost is a directory walk of those two
+volumes at startup.
+
+Only absolute paths below the filesystem root are touched. A relative
+`MANAGER_POLICY_OUTPUT`, or either path set to `/`, is refused with a message
+and skipped rather than recursively chowned.
 
 One constraint comes with this: the manager binds the agent plane on port 80
 as an unprivileged user through a file capability on the binary, and

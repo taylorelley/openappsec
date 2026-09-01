@@ -21,12 +21,20 @@ on:
   push:
     paths:
       - "management/**"
+      # Every stack the compose job validates, so a change to one of them
+      # cannot land without that validation running.
       - "deployment/docker-compose/npmplus/**"
+      - "deployment/docker-compose/nginx/**"
+      - "deployment/docker-compose/nginx-unified/**"
       - ".github/workflows/management.yml"
   pull_request:
     paths:
       - "management/**"
+      # Every stack the compose job validates, so a change to one of them
+      # cannot land without that validation running.
       - "deployment/docker-compose/npmplus/**"
+      - "deployment/docker-compose/nginx/**"
+      - "deployment/docker-compose/nginx-unified/**"
       - ".github/workflows/management.yml"
   workflow_dispatch:
 
@@ -165,6 +173,20 @@ jobs:
           owner=$(stat -c %u "$mount")
           test "$owner" = "10001" || { echo "expected owner 10001, got $owner"; exit 1; }
 
+      # There is no WORKDIR in the runtime stage, so a relative policy path
+      # would otherwise make the entrypoint chown the whole filesystem.
+      - name: Check a relative policy path is refused, not chowned
+        run: |
+          out=$(docker run --rm -e MANAGER_POLICY_OUTPUT=local_policy.yaml \
+              -e MANAGER_SHARED_STORAGE_PATH= \
+              --entrypoint /usr/local/bin/docker-entrypoint.sh appsec-manager:ci \
+              stat -c %u /usr/local/bin/appsec-manager 2>&1)
+          echo "$out"
+          echo "$out" | grep -q "refusing to take ownership of relative path" \
+            || { echo "expected the entrypoint to refuse the relative path"; exit 1; }
+          echo "$out" | grep -qx "0" \
+            || { echo "expected / to be left root-owned"; exit 1; }
+
   compose:
     name: Compose stacks
     runs-on: ubuntu-latest
@@ -186,6 +208,9 @@ jobs:
         run: |
           for stack in npmplus nginx nginx-unified; do
             echo "::group::$stack"
-            docker compose --project-directory "deployment/docker-compose/$stack" config -q
+            docker compose \
+              --project-directory "deployment/docker-compose/$stack" \
+              -f "deployment/docker-compose/$stack/docker-compose.yaml" \
+              config -q
             echo "::endgroup::"
           done

@@ -55,20 +55,45 @@ shared_storage="${MANAGER_SHARED_STORAGE_PATH-/db}"
 for dir in "$policy_dir" "$shared_storage"; do
     [ -n "$dir" ] || continue
 
+    # Strip trailing slashes so "/" cannot reach the checks below disguised
+    # as "//" or "/db/".
+    while :; do
+        case "$dir" in
+            */) dir="${dir%/}" ;;
+            *) break ;;
+        esac
+    done
+
+    # Both paths come from the environment, and a recursive chown of the
+    # wrong one is not recoverable. The runtime stage sets no WORKDIR, so a
+    # relative MANAGER_POLICY_OUTPUT would leave dirname yielding "." — the
+    # container's root — and "/" is just as bad. Only ever act on an absolute
+    # path below the root, and fail the directory rather than the container:
+    # the server treats an unwritable volume as a warning, so a bad value here
+    # should degrade the same way rather than break the deployment.
+    case "$dir" in
+        "" | /)
+            echo "entrypoint: refusing to take ownership of the filesystem root" >&2
+            continue
+            ;;
+        /*) ;;
+        *)
+            echo "entrypoint: refusing to take ownership of relative path '$dir'" >&2
+            continue
+            ;;
+    esac
+
     if ! mkdir -p "$dir" 2>/dev/null; then
         echo "entrypoint: cannot create $dir, leaving it alone" >&2
         continue
     fi
 
-    # Recursive, because a sibling container running as root may already own
-    # subdirectories the manager needs to create files inside — most often
-    # <tenant>/<asset>/ under the shared storage. Guarded on the root's
-    # current owner so this is a one-time cost on first start rather than a
-    # full walk of the learning volume on every restart.
-    owner="$(stat -c %u "$dir" 2>/dev/null || echo unknown)"
-    if [ "$owner" = "$PUID" ]; then
-        continue
-    fi
+    # Recursive and on every start, not just the first. A sibling container
+    # running as root can create <tenant>/ and <tenant>/<asset>/ under the
+    # shared storage at any time, and the manager has to be able to create
+    # files inside those. Testing only the root directory's owner would skip
+    # precisely the case that breaks the next write, since the root is already
+    # correct by then.
     if ! chown -R "$PUID:$PGID" "$dir" 2>/dev/null; then
         echo "entrypoint: cannot chown $dir to $PUID:$PGID, continuing" >&2
     fi
