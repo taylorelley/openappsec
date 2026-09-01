@@ -1,0 +1,202 @@
+# Copyright (C) 2026 Check Point Software Technologies Ltd. All rights reserved.
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+##
+## Docker compose file for open-appsec integrated with NPMplus
+## (https://github.com/ZoeyVid/NPMplus), managed by the self-hosted
+## open-appsec Manager instead of the SaaS portal at my.openappsec.io.
+##
+## This is the open-appsec block of NPMplus's own compose.yaml with
+## smartsync-tuning replaced by the manager, which becomes the agent's
+## TUNING_HOST and renders the policy the agent loads. See README.md in this
+## directory before deploying — in particular the note on pinning NPMplus.
+##
+
+name: npmplus-openappsec
+
+services:
+  ## NPMplus: the reverse proxy and its own web UI, with the open-appsec
+  ## attachment module loaded into nginx.
+  npmplus:
+    image: ${NPMPLUS_IMAGE}
+    container_name: npmplus
+    restart: unless-stopped
+    ## Upstream's default. Note it puts NPMplus on the host's network
+    ## namespace, so it reaches the manager's admin UI at 127.0.0.1:8080
+    ## rather than by container name.
+    network_mode: host
+    ## Required by the attachment module: it talks to the agent over shared
+    ## memory rather than over the network.
+    ipc: host
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ${NPMPLUS_DATA}:/data
+      - shm-volume:/dev/shm/check-point
+    environment:
+      - TZ=${TZ}
+      - NGINX_LOAD_OPENAPPSEC_ATTACHMENT_MODULE=true
+    depends_on:
+      - openappsec-agent
+
+  ## The open-appsec agent. It enforces policy inside the nginx worker via the
+  ## attachment above, and posts its event stream to the manager.
+  openappsec-agent:
+    image: ghcr.io/openappsec/agent:${APPSEC_VERSION}
+    container_name: openappsec-agent
+    restart: unless-stopped
+    ipc: host
+    environment:
+      - TZ=${TZ}
+      - registered_server=NPMplus
+      - user_email=${APPSEC_USER_EMAIL}
+      - https_proxy=${APPSEC_HTTPS_PROXY}
+      - AGENT_TOKEN=${APPSEC_AGENT_TOKEN}
+      ## The manager writes local_policy.yaml into the shared /ext/appsec
+      ## volume; autoPolicyLoad makes the agent pick it up without a restart.
+      - autoPolicyLoad=${APPSEC_AUTO_POLICY_LOAD}
+      - SHARED_STORAGE_HOST=openappsec-shared-storage
+      - LEARNING_HOST=openappsec-smartsync
+      ## The manager replaces smartsync-tuning: this is what makes the event
+      ## stream arrive in its UI. The policy's log trigger must also have
+      ## logDestination.local-tuning enabled ("Send to this manager").
+      - TUNING_HOST=openappsec-manager
+      ## Exposes the agent's prometheus nano-service on :7465, which the
+      ## manager scrapes once you set the endpoint under Fleet -> Details.
+      - PROMETHEUS=true
+    volumes:
+      - ${APPSEC_CONFIG}:/etc/cp/conf
+      - ${APPSEC_DATA}:/etc/cp/data
+      - ${APPSEC_LOGS}:/var/log/nano_agent
+      - ${APPSEC_LOCALCONFIG}:/ext/appsec
+      - shm-volume:/dev/shm/check-point
+    command: /cp-nano-agent
+    ## Start-order only, not a gate: the manager seeds local_policy.yaml on
+    ## startup, and starting after it means the agent finds a policy on its
+    ## first look rather than on the next autoPolicyLoad poll.
+    depends_on:
+      - openappsec-manager
+
+  ## open-appsec Manager: the self-hosted policy, events and fleet UI.
+  openappsec-manager:
+    ## Built from this repository, because no registry currently publishes the
+    ## manager image. Once one does, set APPSEC_MANAGER_IMAGE to it and
+    ## `docker compose pull` will use it instead of building.
+    image: ${APPSEC_MANAGER_IMAGE}
+    build:
+      context: ../../../management
+      dockerfile: docker/Dockerfile.manager
+    container_name: openappsec-manager
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+      - MANAGER_DB_HOST=openappsec-db
+      - MANAGER_DB_USER=${APPSEC_DB_USER}
+      - MANAGER_DB_PASSWORD=${APPSEC_DB_PASSWORD}
+      - MANAGER_DB_NAME=${APPSEC_MANAGER_DB_NAME}
+      - MANAGER_ADMIN_LISTEN=:8080
+      ## The agent plane must stay on plain HTTP port 80: the agent hardcodes
+      ## both when posting its event stream to the tuning host. It is not
+      ## published below, so it stays on this compose network.
+      - MANAGER_AGENT_LISTEN=:80
+      - MANAGER_ADMIN_USER=${APPSEC_MANAGER_ADMIN_USER}
+      - MANAGER_ADMIN_PASSWORD=${APPSEC_MANAGER_ADMIN_PASSWORD}
+      - MANAGER_EVENT_RETENTION_DAYS=${APPSEC_MANAGER_EVENT_RETENTION_DAYS}
+    volumes:
+      ## Read-write: the manager renders local_policy.yaml here for the agent.
+      - ${APPSEC_LOCALCONFIG}:/ext/appsec
+      ## Read-write: tuning decisions are published into the shared-storage
+      ## volume, because the agent fetches decisions.data from
+      ## SHARED_STORAGE_HOST rather than from the tuning host.
+      - ${APPSEC_SMART_SYNC_STORAGE}:/db
+    ports:
+      ## Bound to loopback by default: the admin plane is plain HTTP here.
+      ## Publish it properly by adding a proxy host in NPMplus that forwards a
+      ## hostname to 127.0.0.1:8080 with a certificate, rather than by opening
+      ## this port to the network.
+      - "${APPSEC_MANAGER_BIND}:${APPSEC_MANAGER_PORT}:8080"
+    ## Note: do not add no-new-privileges here. The manager binds the agent
+    ## plane on port 80 as an unprivileged user via a file capability, which
+    ## no_new_privs disables.
+    depends_on:
+      - openappsec-db
+
+  ## Shares learning between the agent's processes. Without it, each nginx
+  ## worker learns on its own.
+  openappsec-smartsync:
+    image: ghcr.io/openappsec/smartsync:${APPSEC_VERSION}
+    container_name: openappsec-smartsync
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+      - SHARED_STORAGE_HOST=openappsec-shared-storage
+    depends_on:
+      - openappsec-shared-storage
+
+  openappsec-shared-storage:
+    image: ghcr.io/openappsec/smartsync-shared-files:${APPSEC_VERSION}
+    container_name: openappsec-shared-storage
+    restart: unless-stopped
+    ipc: host
+    ## If you do not want to run this container as root you can comment the
+    ## line out and instead run, after deploying:
+    ##   docker exec -u root openappsec-shared-storage chown -R appuser:appuser /db
+    ## In that case also set PUID/PGID on openappsec-manager to appuser's ids,
+    ## so both containers agree on who owns the volume.
+    user: root
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ${APPSEC_SMART_SYNC_STORAGE}:/db
+
+  ## Backs the manager. smartsync-tuning is deliberately absent from this
+  ## stack: the manager is the tuning host.
+  openappsec-db:
+    image: postgres:${APPSEC_POSTGRES_VERSION}
+    container_name: openappsec-db
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+      - POSTGRES_USER=${APPSEC_DB_USER}
+      - POSTGRES_PASSWORD=${APPSEC_DB_PASSWORD}
+      ## The manager refuses to start if this database does not exist.
+      - POSTGRES_DB=${APPSEC_MANAGER_DB_NAME}
+    volumes:
+      - ${APPSEC_POSTGRES_STORAGE}:/var/lib/postgresql
+
+## Example juice-shop backend container (vulnerable webserver, USE ONLY FOR
+## TESTING AND IN LAB ENV). Enable by adding "juiceshop" to COMPOSE_PROFILES,
+## then add a proxy host in NPMplus forwarding to 127.0.0.1:3000 — NPMplus is
+## on the host network namespace and cannot resolve container names.
+  juiceshop-backend:
+    image: bkimminich/juice-shop:latest
+    container_name: juiceshop-backend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    profiles:
+      - juiceshop
+
+volumes:
+  ## The channel the attachment module and the agent use to talk to each
+  ## other. Both containers mount it at /dev/shm/check-point.
+  shm-volume:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs

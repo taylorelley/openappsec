@@ -21,10 +21,12 @@ on:
   push:
     paths:
       - "management/**"
+      - "deployment/docker-compose/npmplus/**"
       - ".github/workflows/management.yml"
   pull_request:
     paths:
       - "management/**"
+      - "deployment/docker-compose/npmplus/**"
       - ".github/workflows/management.yml"
   workflow_dispatch:
 
@@ -132,8 +134,58 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Lint the entrypoint
+        run: shellcheck docker/docker-entrypoint.sh
+
       - name: Build the manager image
         run: docker build -f docker/Dockerfile.manager -t appsec-manager:ci .
 
       - name: Build the companion image
         run: docker build -f docker/Dockerfile.agent-sync -t appsec-agent-sync:ci .
+
+      # The entrypoint fixes ownership as root and then runs the server
+      # unprivileged. Both halves are easy to break silently, so assert them.
+      - name: Check the entrypoint drops privileges
+        run: |
+          uid=$(docker run --rm --entrypoint /usr/local/bin/docker-entrypoint.sh \
+              appsec-manager:ci id -u)
+          test "$uid" = "10001" || { echo "expected uid 10001, got $uid"; exit 1; }
+
+      - name: Check an explicit user is left alone
+        run: |
+          uid=$(docker run --rm --user 65534 \
+              --entrypoint /usr/local/bin/docker-entrypoint.sh appsec-manager:ci id -u)
+          test "$uid" = "65534" || { echo "expected uid 65534, got $uid"; exit 1; }
+
+      - name: Check the manager takes ownership of a root-owned bind mount
+        run: |
+          mount=$(mktemp -d)
+          docker run --rm -v "$mount:/ext/appsec" \
+              --entrypoint /usr/local/bin/docker-entrypoint.sh appsec-manager:ci true
+          owner=$(stat -c %u "$mount")
+          test "$owner" = "10001" || { echo "expected owner 10001, got $owner"; exit 1; }
+
+  compose:
+    name: Compose stacks
+    runs-on: ubuntu-latest
+
+    # The stacks live outside management/, which the workflow-level default
+    # points at.
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Catches variables that were renamed in one file but not the other, and
+      # build contexts that no longer resolve.
+      - name: Validate the compose stacks that reference the manager
+        run: |
+          for stack in npmplus nginx nginx-unified; do
+            echo "::group::$stack"
+            docker compose --project-directory "deployment/docker-compose/$stack" config -q
+            echo "::endgroup::"
+          done
